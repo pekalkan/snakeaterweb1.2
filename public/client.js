@@ -44,8 +44,8 @@ socket.on('game_over', (data) => {
 socket.on('state', (state) => {
     const me = state.players[socket.id];
     
-    // --- SHOW/HIDE SHRINK WARNING ---
-    if (state.isShrinking) {
+    // --- UPDATED: Warning logic uses the specific flag for 3-second display ---
+    if (state.shouldShowWarning) {
         shrinkWarningBox.style.display = 'block';
     } else {
         shrinkWarningBox.style.display = 'none';

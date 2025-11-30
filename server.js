@@ -8,8 +8,8 @@ app.use(express.static('public'));
 // --- GAME SETTINGS ---
 const FPS = 60;
 let mapRadius = 6000; // Large Map
-const MIN_MAP_RADIUS = 500;
-const SHRINK_RATE = 1.0; // Increased rate since it's intermittent now
+const MIN_MAP_RADIUS = 0; // FIXED: Changed from 500 to 0 (Shrink to death)
+const SHRINK_RATE = 1.0; 
 const NET_COOLDOWN_MS = 30000; // 30 Seconds
 
 // --- MATH HELPERS ---
@@ -122,11 +122,11 @@ let foods = [];
 let activeMines = [];
 let nets = [];
 
-// NEW: Shrink State Management
+// Shrink State
 let isShrinking = false;
-let shrinkTimer = 0; // Counts frames
+let shrinkTimer = 0; 
 
-// Initial Food Spawn (Reduced count)
+// Initial Food
 for(let i=0; i<420; i++) spawnFood();
 
 function spawnFood(x, y, specificType) {
@@ -135,7 +135,7 @@ function spawnFood(x, y, specificType) {
     
     if (spawnX === undefined || spawnY === undefined) {
         const angle = Math.random() * Math.PI * 2;
-        const r = Math.random() * mapRadius;
+        const r = Math.random() * Math.max(100, mapRadius); // Spawn within current radius
         spawnX = Math.cos(angle) * r;
         spawnY = Math.sin(angle) * r;
     }
@@ -196,8 +196,10 @@ io.on('connection', (socket) => {
         if (players[socket.id]) {
             let p = players[socket.id];
             p.isDead = false;
-            p.x = (Math.random() - 0.5) * 1000;
-            p.y = (Math.random() - 0.5) * 1000;
+            // Respawn safely inside current map radius
+            const safeR = Math.max(100, mapRadius - 200);
+            p.x = (Math.random() - 0.5) * safeR;
+            p.y = (Math.random() - 0.5) * safeR;
             p.length = 50;
             p.score = 0;
             p.points = [];
@@ -232,25 +234,26 @@ io.on('connection', (socket) => {
 // --- GAME LOOP ---
 setInterval(() => {
     // --- WAVE SHRINKING LOGIC ---
-    // Cycle: 20s Wait -> 20s Shrink -> Repeat
     shrinkTimer++;
     if (isShrinking) {
-        // Shrink Phase
+        // Shrink Phase (20s)
         if (mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
         
-        // After 20 seconds (1200 frames), stop shrinking
         if (shrinkTimer > 1200) {
             isShrinking = false;
             shrinkTimer = 0;
         }
     } else {
-        // Wait Phase
-        // After 20 seconds (1200 frames), start shrinking
+        // Wait Phase (20s)
         if (shrinkTimer > 1200) {
             isShrinking = true;
             shrinkTimer = 0;
         }
     }
+    
+    // NEW: Calculate specific warning flag (Only true for first 3 seconds of shrinking)
+    // 180 frames = 3 seconds (60fps * 3)
+    const shouldShowWarning = isShrinking && shrinkTimer <= 180;
 
     for (let id in players) {
         let p = players[id];
@@ -345,8 +348,8 @@ setInterval(() => {
         if(nets[i].timer <= 0) nets.splice(i, 1);
     }
 
-    // SEND STATE (Includes isShrinking flag)
-    io.emit('state', { players, foods, activeMines, nets, mapRadius, isShrinking });
+    // Send State (Sending shouldShowWarning instead of isShrinking)
+    io.emit('state', { players, foods, activeMines, nets, mapRadius, shouldShowWarning });
 }, 1000/FPS);
 
 http.listen(3000, () => console.log('Server running on port 3000'));
