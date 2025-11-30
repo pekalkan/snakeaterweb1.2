@@ -5,18 +5,18 @@ const io = require('socket.io')(http);
 
 app.use(express.static('public'));
 
-// --- OYUN AYARLARI ---
+// --- GAME SETTINGS ---
 const FPS = 60;
-let mapRadius = 2000; // Harita büyüklüğü
+let mapRadius = 6000; // Large Map (3x)
 const MIN_MAP_RADIUS = 500;
-const SHRINK_RATE = 0.5; // Daralma hızı
+const SHRINK_RATE = 0.5; 
 
-// --- YARDIMCI MATEMATİK ---
+// --- MATH HELPERS ---
 function dist(x1, y1, x2, y2) {
     return Math.hypot(x2 - x1, y2 - y1);
 }
 
-// --- SINIFLAR ---
+// --- CLASSES ---
 class Snake {
     constructor(id, x, y) {
         this.id = id;
@@ -24,12 +24,12 @@ class Snake {
         this.y = y;
         this.angle = Math.random() * Math.PI * 2;
         this.points = [];
-        this.length = 50; // Başlangıç boyu
+        this.length = 50; 
         this.thickness = 12;
         this.score = 0;
         this.speed = 3;
         
-        // Başlangıç vücudu
+        // Initialize body
         for(let i=0; i<this.length; i++) {
             this.points.push({x: x, y: y});
         }
@@ -41,40 +41,42 @@ class Snake {
     }
 
     update() {
-        // Hız Ayarı
+        // Speed Logic
         let currentSpeed = this.speed;
         if (this.isBoosting || this.boostTimer > 0) currentSpeed = 6;
         
+        // Handle Timers
         if (this.boostTimer > 0) this.boostTimer--;
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
         }
 
-        // Hareket
+        // Movement
         this.x += Math.cos(this.angle) * currentSpeed;
         this.y += Math.sin(this.angle) * currentSpeed;
 
-        // Vücut Takibi
+        // Body Tracking
         this.points.unshift({x: this.x, y: this.y});
         while (this.points.length > this.length) {
             this.points.pop();
         }
 
-        // Alan Dışı Kontrolü (Zehir)
+        // Out of Bounds Check (Poison)
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.length = Math.max(10, this.length - 0.5);
         }
     }
 }
 
+// --- GLOBAL STATE ---
 let players = {};
 let foods = [];
 let activeMines = [];
 let nets = [];
 
-// Yemleri Oluştur
-for(let i=0; i<100; i++) spawnFood();
+// Initial Food Spawn (High count for large map)
+for(let i=0; i<600; i++) spawnFood();
 
 function spawnFood() {
     const angle = Math.random() * Math.PI * 2;
@@ -82,6 +84,7 @@ function spawnFood() {
     const typeRoll = Math.random();
     let type = 'normal';
     
+    // Drop rates
     if (typeRoll < 0.05) type = 'boost';
     else if (typeRoll < 0.1) type = 'shield';
     else if (typeRoll < 0.15) type = 'mine';
@@ -95,14 +98,15 @@ function spawnFood() {
     });
 }
 
+// --- SOCKET CONNECTION ---
 io.on('connection', (socket) => {
-    console.log('Oyuncu geldi:', socket.id);
+    console.log('Player connected:', socket.id);
     players[socket.id] = new Snake(socket.id, 0, 0);
 
     socket.on('input', (data) => {
         if(players[socket.id]) {
             let p = players[socket.id];
-            // Yumuşak dönüş
+            // Smooth turn
             let diff = data.angle - p.angle;
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
@@ -125,18 +129,21 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
+        console.log('Player disconnected:', socket.id);
         delete players[socket.id];
     });
 });
 
+// --- GAME LOOP ---
 setInterval(() => {
+    // Shrink Map
     if(mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
 
     for (let id in players) {
         let p = players[id];
         p.update();
 
-        // Yem Yeme
+        // Check Food Collision
         for(let i=foods.length-1; i>=0; i--) {
             let f = foods[i];
             if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
@@ -150,19 +157,21 @@ setInterval(() => {
             }
         }
 
-        // KESME MEKANİĞİ (En Önemli Kısım)
+        // CUTTING MECHANIC (Collision with other snakes)
         for(let otherId in players) {
             if(id === otherId) continue;
             let enemy = players[otherId];
             if(enemy.invulnerable) continue;
 
-            // Düşmanın vücuduna çarpma kontrolü
+            // Check collision with enemy body segments
             for(let i=5; i<enemy.points.length; i++) {
                 if(dist(p.x, p.y, enemy.points[i].x, enemy.points[i].y) < p.thickness + enemy.thickness) {
-                    // Kestik!
+                    // Cut confirmed
                     let stolen = enemy.points.length - i;
-                    enemy.points.splice(i);
+                    enemy.points.splice(i); // Remove tail
                     enemy.length = enemy.points.length;
+                    
+                    // Reward attacker
                     p.score += stolen * 10;
                     p.length += stolen * 0.5;
                     break;
@@ -171,11 +180,11 @@ setInterval(() => {
         }
     }
 
-    // Mayınlar
+    // Update Mines
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
-            // Patlama
+            // Explode
             for(let id in players) {
                 if(dist(players[id].x, players[id].y, activeMines[i].x, activeMines[i].y) < 150) {
                     if(!players[id].invulnerable) players[id].length /= 2;
@@ -185,7 +194,8 @@ setInterval(() => {
         }
     }
 
+    // Broadcast State
     io.emit('state', { players, foods, activeMines, nets, mapRadius });
 }, 1000/FPS);
 
-http.listen(3000, () => console.log('Oyun sunucusu çalışıyor: port 3000'));
+http.listen(3000, () => console.log('Server running on port 3000'));

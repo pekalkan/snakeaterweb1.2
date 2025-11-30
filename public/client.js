@@ -9,6 +9,7 @@ canvas.height = window.innerHeight;
 
 let mouseX = 0, mouseY = 0, isBoosting = false;
 
+// Input Handling
 window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 window.addEventListener('mousedown', () => isBoosting = true);
 window.addEventListener('mouseup', () => isBoosting = false);
@@ -18,33 +19,36 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { if(e.code === 'Space') isBoosting = false; });
 
+// Send Input Loop
 setInterval(() => {
     const angle = Math.atan2(mouseY - canvas.height/2, mouseX - canvas.width/2);
     socket.emit('input', { angle, isBoosting });
 }, 1000/60);
 
+// Game Rendering
 socket.on('state', (state) => {
     const me = state.players[socket.id];
     if(!me) return;
 
-    // UI Güncelle
-    document.getElementById('stats').innerText = `Uzunluk: ${Math.floor(me.length)} | Puan: ${me.score}`;
+    // Update UI
+    document.getElementById('stats').innerText = `Length: ${Math.floor(me.length)} | Score: ${me.score}`;
 
-    // Ekranı Temizle
+    // Clear Screen
     ctx.fillStyle = '#12161c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
+    // Center Camera on Player
     ctx.translate(canvas.width/2 - me.x, canvas.height/2 - me.y);
 
-    // Sınır Çizgisi
+    // Draw Map Boundary
     ctx.beginPath();
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
     ctx.strokeStyle = '#555';
     ctx.lineWidth = 5;
     ctx.stroke();
 
-    // Objeleri Çiz
+    // Draw Objects
     state.activeMines.forEach(m => drawCircle(m.x, m.y, m.radius, 'rgba(255,0,0,0.3)'));
     state.nets.forEach(n => drawCircle(n.x, n.y, n.radius, 'rgba(138, 43, 226, 0.4)'));
 
@@ -56,23 +60,25 @@ socket.on('state', (state) => {
         drawCircle(f.x, f.y, f.radius, color);
     });
 
-    // Yılanları Çiz
+    // Draw Snakes
     for(let id in state.players) {
         let p = state.players[id];
         let color = (id === socket.id) ? '#3cbe5a' : '#5a90be';
         if(p.invulnerable) color = '#0f0';
         
+        // Draw Body Segments
         p.points.forEach(pt => drawCircle(pt.x, pt.y, p.thickness, color));
-        drawCircle(p.x, p.y, p.thickness+2, '#fff'); // Kafa
+        // Draw Head
+        drawCircle(p.x, p.y, p.thickness+2, '#fff'); 
         
-        // İsim
+        // Draw Name/ID
         ctx.fillStyle = 'white';
         ctx.font = '12px Arial';
         ctx.fillText(id.substring(0,4), p.x, p.y - 20);
     }
     ctx.restore();
 
-    // Mini Harita
+    // Draw Minimap
     drawMinimap(state, me);
 });
 
@@ -85,7 +91,8 @@ function drawCircle(x, y, r, color) {
 
 function drawMinimap(state, me) {
     miniCtx.clearRect(0,0,150,150);
-    const scale = 150 / 4000;
+    // Dynamic Scale for large map
+    const scale = 150 / (state.mapRadius * 2); 
     const cx = 75, cy = 75;
 
     miniCtx.strokeStyle = '#888';
