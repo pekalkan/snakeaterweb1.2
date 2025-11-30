@@ -4,6 +4,14 @@ const ctx = canvas.getContext('2d');
 const miniCanvas = document.getElementById('minimap');
 const miniCtx = miniCanvas.getContext('2d');
 
+// UI Elements - IDs must match index.html
+const gameOverScreen = document.getElementById('gameOverScreen');
+const finalScoreText = document.getElementById('finalScore');
+const respawnBtn = document.getElementById('respawnBtn');
+const statsBox = document.getElementById('stats');
+const netBox = document.getElementById('netStatus');
+const speedBox = document.getElementById('speedStatus');
+
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
@@ -19,29 +27,63 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { if(e.code === 'Space') isBoosting = false; });
 
-// Send Input Loop
+respawnBtn.addEventListener('click', () => {
+    socket.emit('respawn');
+    gameOverScreen.classList.add('hidden'); 
+});
+
 setInterval(() => {
     const angle = Math.atan2(mouseY - canvas.height/2, mouseX - canvas.width/2);
     socket.emit('input', { angle, isBoosting });
 }, 1000/60);
 
-// Game Rendering
+socket.on('game_over', (data) => {
+    finalScoreText.innerText = 'Final Score: ' + Math.floor(data.score);
+    gameOverScreen.classList.remove('hidden'); 
+});
+
 socket.on('state', (state) => {
     const me = state.players[socket.id];
-    if(!me) return;
+    
+    // UI Updates
+    if(me && !me.isDead) {
+        // Score
+        statsBox.innerText = `Length: ${Math.floor(me.length)} | Score: ${me.score}`;
+        
+        // Net Cooldown Visual
+        if (me.currentNetCooldown <= 0) {
+            netBox.innerText = "Net: READY (E)";
+            netBox.style.color = "#0f0"; // Green
+        } else {
+            // Convert ms to seconds
+            const secondsLeft = Math.ceil(me.currentNetCooldown / 1000);
+            netBox.innerText = `Net: ${secondsLeft}s`;
+            netBox.style.color = "#ff4444"; // Red
+        }
 
-    // Update UI
-    document.getElementById('stats').innerText = `Length: ${Math.floor(me.length)} | Score: ${me.score}`;
+        // Speed/Boost Visual
+        if (isBoosting) {
+             speedBox.style.color = "gold";
+             speedBox.innerText = "Speed: BOOSTING!";
+        } else {
+             speedBox.style.color = "white";
+             speedBox.innerText = "Speed: Ready (Space)";
+        }
+    }
 
     // Clear Screen
     ctx.fillStyle = '#12161c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
-    // Center Camera on Player
-    ctx.translate(canvas.width/2 - me.x, canvas.height/2 - me.y);
+    
+    if (me && !me.isDead) {
+        ctx.translate(canvas.width/2 - me.x, canvas.height/2 - me.y);
+    } else {
+        ctx.translate(canvas.width/2, canvas.height/2); 
+    }
 
-    // Draw Map Boundary
+    // Map Border
     ctx.beginPath();
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
     ctx.strokeStyle = '#555';
@@ -63,23 +105,21 @@ socket.on('state', (state) => {
     // Draw Snakes
     for(let id in state.players) {
         let p = state.players[id];
+        if (p.isDead) continue; 
+
         let color = (id === socket.id) ? '#3cbe5a' : '#5a90be';
         if(p.invulnerable) color = '#0f0';
         
-        // Draw Body Segments
         p.points.forEach(pt => drawCircle(pt.x, pt.y, p.thickness, color));
-        // Draw Head
         drawCircle(p.x, p.y, p.thickness+2, '#fff'); 
         
-        // Draw Name/ID
         ctx.fillStyle = 'white';
         ctx.font = '12px Arial';
         ctx.fillText(id.substring(0,4), p.x, p.y - 20);
     }
     ctx.restore();
 
-    // Draw Minimap
-    drawMinimap(state, me);
+    if(me && !me.isDead) drawMinimap(state, me);
 });
 
 function drawCircle(x, y, r, color) {
@@ -91,7 +131,6 @@ function drawCircle(x, y, r, color) {
 
 function drawMinimap(state, me) {
     miniCtx.clearRect(0,0,150,150);
-    // Dynamic Scale for large map
     const scale = 150 / (state.mapRadius * 2); 
     const cx = 75, cy = 75;
 
@@ -102,6 +141,8 @@ function drawMinimap(state, me) {
 
     for(let id in state.players) {
         let p = state.players[id];
+        if(p.isDead) continue;
+        
         miniCtx.fillStyle = (id === socket.id) ? '#0f0' : '#f00';
         miniCtx.beginPath();
         miniCtx.arc(cx + p.x*scale, cy + p.y*scale, 2, 0, Math.PI*2);

@@ -47,7 +47,6 @@ class Snake {
         
         // Ability Cooldowns
         this.lastNetTime = 0; 
-        // We will calculate this frame-by-frame for the client
         this.currentNetCooldown = 0; 
     }
 
@@ -71,7 +70,6 @@ class Snake {
         this.currentNetCooldown = Math.max(0, NET_COOLDOWN_MS - timePassed);
 
         // Dynamic Thickness Logic
-        // Snake gets thicker as it grows (Max 35)
         this.thickness = 12 + (this.length * 0.02); 
         if (this.thickness > 35) this.thickness = 35;
 
@@ -88,7 +86,7 @@ class Snake {
         // Poison / Out of Bounds Logic
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
-            if (this.poisonTimer > 300) { // 5 seconds (60fps * 5)
+            if (this.poisonTimer > 300) { // 5 seconds
                 return 'die'; 
             }
         } else {
@@ -139,7 +137,6 @@ function spawnFood(x, y, specificType) {
 }
 
 function scatterFood(x, y) {
-    // Scatter food randomly around a point
     const scatterRange = 40; 
     const offsetX = (Math.random() - 0.5) * scatterRange;
     const offsetY = (Math.random() - 0.5) * scatterRange;
@@ -172,10 +169,8 @@ io.on('connection', (socket) => {
         if(players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             let diff = data.angle - p.angle;
-            // Normalize angle
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
-            // Turn speed limit
             p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 0.1);
             p.isBoosting = data.isBoosting;
         }
@@ -210,7 +205,7 @@ io.on('connection', (socket) => {
                     y: p.y + Math.sin(p.angle) * 150,
                     radius: 100,
                     owner: p.id,
-                    timer: 120 // Net duration in frames
+                    timer: 120 
                 });
             }
         }
@@ -252,11 +247,10 @@ setInterval(() => {
 
         // Check Nets
         for (let n of nets) {
-            // Cannot be trapped by own net
             if (n.owner !== p.id) {
                 if (dist(p.x, p.y, n.x, n.y) < n.radius) {
                     if (!p.invulnerable) {
-                        p.length -= 1.0; // Melt logic
+                        p.length -= 1.0; 
                         if (p.length < 10) killPlayer(p);
                     }
                 }
@@ -285,19 +279,38 @@ setInterval(() => {
         }
     }
 
-    // Update Mines
+    // Update Mines (BOMBA MANTIĞI BURADA DÜZELTİLDİ)
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
             // Explode
             for(let id in players) {
                 let p = players[id];
-                if(p.isDead) continue;
+                if(p.isDead || p.invulnerable) continue;
                 
-                let d = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
-                if(d < 150) {
-                    if(!p.invulnerable) {
-                         killPlayer(p);
+                // 1. Kafa Kontrolü (Kesin Ölüm)
+                let headDist = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
+                if(headDist < 150) {
+                    killPlayer(p);
+                    continue; // Kafa patladıysa vücuda bakmaya gerek yok
+                }
+
+                // 2. Vücut Kontrolü (%50 Küçülme)
+                let bodyHit = false;
+                // Vücudun her parçasını kontrol et
+                for(let j = 0; j < p.points.length; j += 5) { // Performans için 5'er atlayarak bak
+                    let pt = p.points[j];
+                    if(dist(pt.x, pt.y, activeMines[i].x, activeMines[i].y) < 150) {
+                        bodyHit = true;
+                        break;
+                    }
+                }
+
+                if (bodyHit) {
+                    p.length = Math.floor(p.length / 2);
+                    // Uzunluğu hemen güncelle ki görsel olarak da kısalsın
+                    if(p.points.length > p.length) {
+                        p.points.splice(p.length);
                     }
                 }
             }
