@@ -38,27 +38,61 @@ class Snake {
             this.points.push({x: x, y: y});
         }
         
-        this.isBoosting = false;
-        this.boostTimer = 0;
+        this.isBoosting = false; // Manual boost (Space/Click)
+        this.boostTimer = 0;     // Power-up boost (Yellow Orb)
         this.invulnerable = false;
         this.shieldTimer = 0;
         
         this.poisonTimer = 0; 
         
-        // Ability Cooldowns
+        // Timers
         this.lastNetTime = 0; 
-        this.currentNetCooldown = 0; 
+        this.currentNetCooldown = 0;
+        this.massDropTimer = 0; // Timer for dropping mass when boosting
     }
 
     update() {
         if (this.isDead) return 'dead';
 
-        // Speed Logic
         let currentSpeed = this.speed;
-        if (this.isBoosting || this.boostTimer > 0) currentSpeed = 6;
-        
-        // Handle Effect Timers
-        if (this.boostTimer > 0) this.boostTimer--;
+
+        // --- SPEED & MASS DROP LOGIC ---
+        // 1. Power-up Boost (Free, no mass loss)
+        if (this.boostTimer > 0) {
+            currentSpeed = 6;
+            this.boostTimer--;
+        } 
+        // 2. Manual Boost (Costs mass)
+        else if (this.isBoosting) {
+            // Can only boost if length is sufficient (> 20)
+            if (this.length > 20) {
+                currentSpeed = 6;
+                
+                // Drop mass logic
+                this.massDropTimer++;
+                if (this.massDropTimer > 10) { // Every 10 frames (~6 times per second)
+                    // Shrink
+                    this.length -= 1;
+                    this.score = Math.max(0, this.score - 10);
+                    
+                    // Drop food at the tail position
+                    // We check the last point in the array
+                    const tail = this.points[this.points.length - 1];
+                    if (tail) {
+                        spawnFood(tail.x, tail.y, 'normal');
+                    }
+
+                    this.massDropTimer = 0;
+                }
+            } else {
+                // Not enough mass to boost
+                currentSpeed = this.speed; 
+            }
+        } else {
+            this.massDropTimer = 0;
+        }
+
+        // Handle Shield Timer
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
@@ -104,12 +138,14 @@ let activeMines = [];
 let nets = [];
 
 // Initial Food Spawn
-for(let i=0; i<600; i++) spawnFood();
+// UPDATED: Reduced by 30% (600 -> 420)
+for(let i=0; i<420; i++) spawnFood();
 
 function spawnFood(x, y, specificType) {
     let spawnX = x;
     let spawnY = y;
     
+    // If no coordinates provided, pick random location inside map
     if (spawnX === undefined || spawnY === undefined) {
         const angle = Math.random() * Math.PI * 2;
         const r = Math.random() * mapRadius;
@@ -172,6 +208,8 @@ io.on('connection', (socket) => {
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
             p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 0.1);
+            
+            // Player intent to boost
             p.isBoosting = data.isBoosting;
         }
     });
@@ -245,7 +283,7 @@ setInterval(() => {
             }
         }
 
-        // --- CHECK NETS (FIXED) ---
+        // Check Nets
         for (let n of nets) {
             // FIXED: Net ignores its owner
             if (n.owner !== p.id) {
@@ -319,11 +357,4 @@ setInterval(() => {
 
     // Update Nets
     for(let i=nets.length-1; i>=0; i--) {
-        nets[i].timer--;
-        if(nets[i].timer <= 0) nets.splice(i, 1);
-    }
-
-    io.emit('state', { players, foods, activeMines, nets, mapRadius });
-}, 1000/FPS);
-
-http.listen(3000, () => console.log('Server running on port 3000'));
+        nets[i].
