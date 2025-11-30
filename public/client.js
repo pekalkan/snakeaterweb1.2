@@ -55,7 +55,6 @@ socket.on('state', (state) => {
             netBox.innerText = "Net: READY (E)";
             netBox.style.color = "#0f0"; // Green
         } else {
-            // Convert ms to seconds
             const secondsLeft = Math.ceil(me.currentNetCooldown / 1000);
             netBox.innerText = `Net: ${secondsLeft}s`;
             netBox.style.color = "#ff4444"; // Red

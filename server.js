@@ -357,4 +357,11 @@ setInterval(() => {
 
     // Update Nets
     for(let i=nets.length-1; i>=0; i--) {
-        nets[i].
+        nets[i].timer--;
+        if(nets[i].timer <= 0) nets.splice(i, 1);
+    }
+
+    io.emit('state', { players, foods, activeMines, nets, mapRadius });
+}, 1000/FPS);
+
+http.listen(3000, () => console.log('Server running on port 3000'));
