@@ -22,10 +22,10 @@ function dist(x1, y1, x2, y2) {
 class Snake {
     constructor(id) {
         this.id = id;
-        this.username = "Unknown"; // New: Username
-        this.isReady = false;      // New: Lobby Ready Status
+        this.username = "Unknown"; 
+        this.isReady = false;      
         
-        // Game Properties (Initialized later)
+        // Game Properties
         this.x = 0;
         this.y = 0;
         this.angle = 0;
@@ -34,7 +34,7 @@ class Snake {
         this.thickness = 12; 
         this.score = 0;
         this.speed = 3;
-        this.isDead = false; // Initially alive, but needs game start to be active
+        this.isDead = true; // Default dead until spawn
         
         this.isBoosting = false; 
         this.boostTimer = 0;     
@@ -61,7 +61,6 @@ class Snake {
         this.boostTimer = 0;
         this.poisonTimer = 0;
         
-        // Initialize body
         for(let i=0; i<this.length; i++) {
             this.points.push({x: this.x, y: this.y});
         }
@@ -132,7 +131,7 @@ let players = {};
 let foods = [];
 let activeMines = [];
 let nets = [];
-let gameRunning = false; // Is the game active?
+let gameRunning = false; 
 
 // Shrink State
 let isShrinking = false;
@@ -183,35 +182,11 @@ function killPlayer(player) {
         scatterFood(pt.x, pt.y);
     }
     player.points = []; 
+    // Send game over only to the loser
     io.to(player.id).emit('game_over', { score: player.score });
     
-    // Check if game should end (0 or 1 player left)
-    checkWinCondition();
-}
-
-function checkWinCondition() {
-    if (!gameRunning) return;
-    
-    // Count alive players
-    const alivePlayers = Object.values(players).filter(p => !p.isDead);
-    
-    if (alivePlayers.length <= 1) {
-        // Game Over - Reset to lobby after 5 seconds
-        setTimeout(() => {
-            gameRunning = false;
-            mapRadius = INITIAL_MAP_RADIUS;
-            foods = [];
-            activeMines = [];
-            nets = [];
-            
-            // Reset all players to 'not ready'
-            Object.values(players).forEach(p => {
-                p.isReady = false;
-            });
-            
-            io.emit('return_to_lobby');
-        }, 5000);
-    }
+    // We NO LONGER automatically reset the game for everyone here.
+    // The survivors keep playing.
 }
 
 function startGame() {
@@ -226,13 +201,15 @@ function startGame() {
     // Spawn Initial Food
     for(let i=0; i<420; i++) spawnFood();
     
-    // Reset all players
+    // Reset all players who are ready
     const safeR = Math.max(100, mapRadius - 500);
     
     Object.values(players).forEach(p => {
-        const sx = (Math.random() - 0.5) * safeR;
-        const sy = (Math.random() - 0.5) * safeR;
-        p.reset(sx, sy);
+        if (p.isReady) {
+            const sx = (Math.random() - 0.5) * safeR;
+            const sy = (Math.random() - 0.5) * safeR;
+            p.reset(sx, sy);
+        }
     });
 
     io.emit('game_started');
@@ -242,24 +219,30 @@ io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
     players[socket.id] = new Snake(socket.id);
 
-    // 1. Join Lobby with Username
     socket.on('join_game', (username) => {
         if(players[socket.id]) {
             players[socket.id].username = username || "Guest";
         }
     });
 
-    // 2. Player Clicked Ready
     socket.on('player_ready', () => {
         if (players[socket.id]) {
-            players[socket.id].isReady = !players[socket.id].isReady; // Toggle
+            players[socket.id].isReady = !players[socket.id].isReady; 
             
-            // Check if everyone is ready to start
+            // Start game if everyone is ready and at least 1 person exists
             const allPlayers = Object.values(players);
-            // We need at least 1 player to start (for testing), usually 2
             if (allPlayers.length > 0 && allPlayers.every(p => p.isReady)) {
                 startGame();
             }
+        }
+    });
+
+    // NEW: Player manually leaving to lobby
+    socket.on('leave_game', () => {
+        if(players[socket.id]) {
+            players[socket.id].isReady = false;
+            players[socket.id].isDead = true;
+            players[socket.id].points = [];
         }
     });
 
@@ -293,27 +276,22 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         delete players[socket.id];
-        // If game is running and player leaves, check win condition
-        if (gameRunning) checkWinCondition();
     });
 });
 
 // --- GAME LOOP ---
 setInterval(() => {
-    // A. LOBBY PHASE
+    // LOBBY PHASE
     if (!gameRunning) {
-        // Just send lobby data (who is connected, who is ready)
-        // We send minimal data for lobby
         const lobbyData = Object.values(players).map(p => ({
             username: p.username,
             isReady: p.isReady
         }));
         io.emit('lobby_state', lobbyData);
-        return; // Don't run game logic
+        return; 
     }
 
-    // B. GAME PHASE (Physics)
-    // --- WAVE SHRINKING LOGIC ---
+    // GAME PHASE
     let shouldShowWarning = false;
     let isMapFixed = false;
 

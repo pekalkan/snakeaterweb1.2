@@ -15,6 +15,7 @@ const minimapEl = document.getElementById('minimap');
 const usernameInput = document.getElementById('usernameInput');
 const joinBtn = document.getElementById('joinBtn');
 const readyBtn = document.getElementById('readyBtn');
+const lobbyBtn = document.getElementById('lobbyBtn'); // Changed from respawnBtn
 const playerList = document.getElementById('playerList');
 
 // UI Stats
@@ -31,7 +32,7 @@ canvas.height = window.innerHeight;
 let mouseX = 0, mouseY = 0, isBoosting = false;
 let stopMessageShown = false; 
 
-// --- 1. LOGIN LOGIC ---
+// --- LOGIN ---
 joinBtn.addEventListener('click', () => {
     const name = usernameInput.value || "Guest";
     socket.emit('join_game', name);
@@ -39,47 +40,47 @@ joinBtn.addEventListener('click', () => {
     lobbyScreen.style.display = 'flex';
 });
 
-// --- 2. LOBBY LOGIC ---
+// --- LOBBY ---
 readyBtn.addEventListener('click', () => {
     socket.emit('player_ready');
-    // Change button style temporarily to show feedback
     readyBtn.style.background = '#888';
 });
 
 socket.on('lobby_state', (players) => {
-    // Render list of players in the lobby
     playerList.innerHTML = '';
     players.forEach(p => {
         const row = document.createElement('div');
         row.className = 'player-row';
-        
         const statusClass = p.isReady ? 'ready-green' : 'ready-red';
         const statusText = p.isReady ? 'READY' : 'WAITING';
-        
         row.innerHTML = `<span>${p.username}</span> <span class="ready-status ${statusClass}">${statusText}</span>`;
         playerList.appendChild(row);
     });
 });
 
-// --- 3. GAME START LOGIC ---
+// --- GAME START ---
 socket.on('game_started', () => {
     lobbyScreen.style.display = 'none';
-    gameOverScreen.style.display = 'none'; // Hide game over if visible
+    gameOverScreen.style.display = 'none'; 
     gameUI.style.display = 'block';
     minimapEl.style.display = 'block';
 });
 
-socket.on('return_to_lobby', () => {
+// --- LEAVE TO LOBBY BUTTON ---
+lobbyBtn.addEventListener('click', () => {
+    socket.emit('leave_game'); // Tell server we left
+    
+    // Switch to Lobby UI immediately
     gameUI.style.display = 'none';
     minimapEl.style.display = 'none';
     gameOverScreen.style.display = 'none';
     lobbyScreen.style.display = 'flex';
     
-    // Reset Ready Button Style
+    // Reset Ready Button
     readyBtn.style.background = '#44aa44';
 });
 
-// --- GAME OVER LOGIC ---
+// --- GAME OVER ---
 socket.on('game_over', (data) => {
     finalScoreText.innerText = 'Final Score: ' + Math.floor(data.score);
     gameOverScreen.style.display = 'flex';
@@ -95,18 +96,20 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { if(e.code === 'Space') isBoosting = false; });
 
-// Input Loop
 setInterval(() => {
     const angle = Math.atan2(mouseY - canvas.height/2, mouseX - canvas.width/2);
     socket.emit('input', { angle, isBoosting });
 }, 1000/60);
 
-
-// --- MAIN GAME RENDER ---
+// --- RENDER ---
 socket.on('game_state', (state) => {
     const me = state.players[socket.id];
     
-    // UI Logic (Shrink, Stats)
+    if (state.mapRadius > 1000) {
+        stopMessageShown = false;
+        shrinkStoppedBox.style.display = 'none';
+    }
+
     if (state.isMapFixed) {
         shrinkWarningBox.style.display = 'none'; 
         if (!stopMessageShown) {
@@ -139,20 +142,18 @@ socket.on('game_state', (state) => {
         }
     }
 
-    // Draw
     ctx.fillStyle = '#12161c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
     
-    // Camera
     if (me && !me.isDead) {
         ctx.translate(canvas.width/2 - me.x, canvas.height/2 - me.y);
     } else {
+        // If dead, center camera on map center or keep last pos (here map center)
         ctx.translate(canvas.width/2, canvas.height/2); 
     }
 
-    // Poison Zone Background
     ctx.save();
     ctx.beginPath();
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
@@ -161,14 +162,12 @@ socket.on('game_state', (state) => {
     ctx.fill('evenodd');
     ctx.restore();
 
-    // Border
     ctx.beginPath();
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
     ctx.strokeStyle = '#8844ff';
     ctx.lineWidth = 5;
     ctx.stroke();
 
-    // Objects
     state.activeMines.forEach(m => drawCircle(m.x, m.y, m.radius, 'rgba(255,0,0,0.3)'));
     state.nets.forEach(n => drawCircle(n.x, n.y, n.radius, 'rgba(138, 43, 226, 0.4)'));
 
@@ -180,7 +179,6 @@ socket.on('game_state', (state) => {
         drawCircle(f.x, f.y, f.radius, color);
     });
 
-    // Snakes
     for(let id in state.players) {
         let p = state.players[id];
         if (p.isDead) continue; 
@@ -191,7 +189,6 @@ socket.on('game_state', (state) => {
         p.points.forEach(pt => drawCircle(pt.x, pt.y, p.thickness, color));
         drawCircle(p.x, p.y, p.thickness+2, '#fff'); 
         
-        // Name Tag
         ctx.fillStyle = 'white';
         ctx.font = 'bold 14px Arial';
         ctx.textAlign = 'center';
@@ -211,7 +208,7 @@ function drawCircle(x, y, r, color) {
 
 function drawMinimap(state, me) {
     miniCtx.clearRect(0,0,150,150);
-    const scale = 150 / (6000 * 2); // Use Max Map Radius for consistent scale
+    const scale = 150 / (6000 * 2); 
     const cx = 75, cy = 75;
 
     miniCtx.strokeStyle = '#8844ff';

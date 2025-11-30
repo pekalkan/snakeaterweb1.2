@@ -6,15 +6,13 @@
     <style>
         body { margin: 0; overflow: hidden; background: #12161c; font-family: 'Segoe UI', sans-serif; color: white; }
         
-        /* GENERAL UI */
-        #gameUI { display: none; } /* Hidden until game starts */
+        #gameUI { display: none; } 
         
         #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; z-index: 10; }
         .box { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; margin-bottom: 5px; min-width: 150px; font-weight: bold;}
         
         #minimap { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.5); border: 2px solid #555; border-radius: 50%; z-index: 10; display: none;}
         
-        /* WARNINGS */
         #shrinkWarning, #shrinkStopped {
             display: none; position: absolute; top: 10%; left: 50%; transform: translateX(-50%);
             font-size: 32px; font-weight: bold; padding: 10px 20px; border-radius: 10px; z-index: 15;
@@ -23,7 +21,6 @@
         #shrinkWarning { color: #ff0000; animation: blink 1s infinite; }
         #shrinkStopped { color: #00ff00; }
         
-        /* LOGIN SCREEN */
         #loginScreen {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: #12161c; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 50;
@@ -32,9 +29,8 @@
         button { padding: 10px 30px; font-size: 20px; cursor: pointer; background: #44aa44; border: none; color: white; border-radius: 5px; }
         button:hover { background: #338833; }
 
-        /* LOBBY SCREEN */
         #lobbyScreen {
-            display: none; /* Hidden initially */
+            display: none; 
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: #1a1e24; flex-direction: column; align-items: center; padding-top: 50px; z-index: 40;
         }
@@ -44,11 +40,15 @@
         .ready-green { color: #0f0; }
         .ready-red { color: #f55; }
 
-        /* GAME OVER */
         #gameOverScreen {
             display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.9); flex-direction: column; justify-content: center; align-items: center; z-index: 60;
         }
+        #lobbyBtn {
+            padding: 15px 40px; font-size: 24px; background: #5555aa; color: white; /* Blue for Lobby */
+            border: none; border-radius: 5px; cursor: pointer; transition: 0.2s;
+        }
+        #lobbyBtn:hover { background: #444499; transform: scale(1.05); }
         
         @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.2; } 100% { opacity: 1; } }
     </style>
@@ -81,7 +81,7 @@
     <div id="gameOverScreen">
         <h1>GAME OVER</h1>
         <h2 id="finalScore">Final Score: 0</h2>
-        <p>Returning to lobby in 5 seconds...</p>
+        <button id="lobbyBtn">RETURN TO LOBBY</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
