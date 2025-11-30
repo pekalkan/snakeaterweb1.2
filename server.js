@@ -5,18 +5,19 @@ const io = require('socket.io')(http);
 
 app.use(express.static('public'));
 
-// --- OYUN AYARLARI ---
+// --- GAME SETTINGS ---
 const FPS = 60;
-let mapRadius = 6000; // Harita Büyüklüğü
+let mapRadius = 6000; // Large Map
 const MIN_MAP_RADIUS = 500;
 const SHRINK_RATE = 0.5; 
+const NET_COOLDOWN_MS = 30000; // 30 Seconds
 
-// --- YARDIMCI MATEMATİK ---
+// --- MATH HELPERS ---
 function dist(x1, y1, x2, y2) {
     return Math.hypot(x2 - x1, y2 - y1);
 }
 
-// --- SINIFLAR ---
+// --- CLASSES ---
 class Snake {
     constructor(id, x, y) {
         this.id = id;
@@ -25,14 +26,14 @@ class Snake {
         this.angle = Math.random() * Math.PI * 2;
         this.points = [];
         this.length = 50; 
-        this.thickness = 12; // Başlangıç kalınlığı
+        this.thickness = 12; // Base thickness
         this.score = 0;
         this.speed = 3;
         
-        // Durumlar
+        // State
         this.isDead = false;
         
-        // Vücut Başlangıcı
+        // Initialize body
         for(let i=0; i<this.length; i++) {
             this.points.push({x: x, y: y});
         }
@@ -44,43 +45,50 @@ class Snake {
         
         this.poisonTimer = 0; 
         
-        // Yetenek Bekleme Süresi (Cooldown)
+        // Ability Cooldowns
         this.lastNetTime = 0; 
+        // We will calculate this frame-by-frame for the client
+        this.currentNetCooldown = 0; 
     }
 
     update() {
         if (this.isDead) return 'dead';
 
-        // Hız Mantığı
+        // Speed Logic
         let currentSpeed = this.speed;
         if (this.isBoosting || this.boostTimer > 0) currentSpeed = 6;
         
-        // Sayaçlar
+        // Handle Effect Timers
         if (this.boostTimer > 0) this.boostTimer--;
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
         }
 
-        // --- DİNAMİK KALINLIK ---
-        // Yılan uzadıkça kalınlaşır (Max 35)
+        // Calculate Net Cooldown for UI
+        const now = Date.now();
+        const timePassed = now - this.lastNetTime;
+        this.currentNetCooldown = Math.max(0, NET_COOLDOWN_MS - timePassed);
+
+        // Dynamic Thickness Logic
+        // Snake gets thicker as it grows (Max 35)
         this.thickness = 12 + (this.length * 0.02); 
         if (this.thickness > 35) this.thickness = 35;
 
-        // Hareket
+        // Movement
         this.x += Math.cos(this.angle) * currentSpeed;
         this.y += Math.sin(this.angle) * currentSpeed;
 
-        // Vücut Takibi
+        // Body Tracking
         this.points.unshift({x: this.x, y: this.y});
         while (this.points.length > this.length) {
             this.points.pop();
         }
 
-        // ZEHİR (ALAN DIŞI) MANTIĞI
+        // Poison / Out of Bounds Logic
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
-            if (this.poisonTimer > 300) { // 5 saniye
+            if (this.poisonTimer > 300) { // 5 seconds (60fps * 5)
                 return 'die'; 
             }
         } else {
@@ -91,13 +99,13 @@ class Snake {
     }
 }
 
-// --- GLOBAL DURUM ---
+// --- GLOBAL STATE ---
 let players = {};
 let foods = [];
 let activeMines = [];
 let nets = [];
 
-// Başlangıç Yemleri
+// Initial Food Spawn
 for(let i=0; i<600; i++) spawnFood();
 
 function spawnFood(x, y, specificType) {
@@ -131,6 +139,7 @@ function spawnFood(x, y, specificType) {
 }
 
 function scatterFood(x, y) {
+    // Scatter food randomly around a point
     const scatterRange = 40; 
     const offsetX = (Math.random() - 0.5) * scatterRange;
     const offsetY = (Math.random() - 0.5) * scatterRange;
@@ -142,19 +151,19 @@ function killPlayer(player) {
     
     player.isDead = true;
 
-    // 1. Vücudu parçalayıp yeme dönüştür
+    // 1. Turn body into scattered food
     for (let i = 0; i < player.points.length; i += 2) {
         const pt = player.points[i];
         scatterFood(pt.x, pt.y);
     }
 
-    // 2. Vücudu tamamen sil
+    // 2. Clear body from screen
     player.points = []; 
 
     io.to(player.id).emit('game_over', { score: player.score });
 }
 
-// --- SOCKET BAĞLANTISI ---
+// --- SOCKET CONNECTION ---
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
     players[socket.id] = new Snake(socket.id, 0, 0);
@@ -163,8 +172,10 @@ io.on('connection', (socket) => {
         if(players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             let diff = data.angle - p.angle;
+            // Normalize angle
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
+            // Turn speed limit
             p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 0.1);
             p.isBoosting = data.isBoosting;
         }
@@ -189,9 +200,9 @@ io.on('connection', (socket) => {
         if(players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             
-            // --- AĞ ATMA BEKLEME SÜRESİ (30 Saniye) ---
+            // --- COOLDOWN CHECK ---
             const now = Date.now();
-            if (now - p.lastNetTime > 30000) { 
+            if (now - p.lastNetTime > NET_COOLDOWN_MS) { 
                 p.lastNetTime = now;
                 
                 nets.push({
@@ -199,7 +210,7 @@ io.on('connection', (socket) => {
                     y: p.y + Math.sin(p.angle) * 150,
                     radius: 100,
                     owner: p.id,
-                    timer: 120 // Ağın yerde kalma süresi (2 saniye)
+                    timer: 120 // Net duration in frames
                 });
             }
         }
@@ -210,7 +221,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- OYUN DÖNGÜSÜ ---
+// --- GAME LOOP ---
 setInterval(() => {
     if(mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
 
@@ -225,7 +236,7 @@ setInterval(() => {
             continue;
         }
 
-        // Yem Yeme
+        // Check Food
         for(let i=foods.length-1; i>=0; i--) {
             let f = foods[i];
             if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
@@ -239,26 +250,20 @@ setInterval(() => {
             }
         }
 
-        // --- AĞ (NET) ETKİLEŞİMİ (YENİ) ---
+        // Check Nets
         for (let n of nets) {
-            // Kendi ağımızdan etkilenmeyiz (Sadece rakipler)
+            // Cannot be trapped by own net
             if (n.owner !== p.id) {
-                // Rakibin ağına girdik mi?
                 if (dist(p.x, p.y, n.x, n.y) < n.radius) {
                     if (!p.invulnerable) {
-                        // Boyunu azalt (Eritme etkisi)
-                        p.length -= 1.0; 
-                        
-                        // Çok küçülürse ölür
-                        if (p.length < 10) {
-                            killPlayer(p);
-                        }
+                        p.length -= 1.0; // Melt logic
+                        if (p.length < 10) killPlayer(p);
                     }
                 }
             }
         }
 
-        // Diğer Yılanlarla Çarpışma
+        // Check Collision with Other Snakes
         for(let otherId in players) {
             if(id === otherId) continue;
             let enemy = players[otherId];
@@ -280,17 +285,16 @@ setInterval(() => {
         }
     }
 
-    // MAYINLAR
+    // Update Mines
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
+            // Explode
             for(let id in players) {
                 let p = players[id];
                 if(p.isDead) continue;
                 
                 let d = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
-                
-                // Bombaya yakalanan direkt ölür
                 if(d < 150) {
                     if(!p.invulnerable) {
                          killPlayer(p);
@@ -301,7 +305,7 @@ setInterval(() => {
         }
     }
 
-    // Ağların Süresini Azalt
+    // Update Nets
     for(let i=nets.length-1; i>=0; i--) {
         nets[i].timer--;
         if(nets[i].timer <= 0) nets.splice(i, 1);
