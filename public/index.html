@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Snakeater Multiplayer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #12161c; font-family: sans-serif; color: white; }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+        .box { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; margin-bottom: 5px; }
+        #minimap { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.5); border: 2px solid #555; border-radius: 50%; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="box" id="stats">Puan: 0</div>
+        <div class="box">Hız: SPACE / Tıkla</div>
+        <div class="box">Ağ At: E</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <canvas id="minimap" width="150" height="150"></canvas>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="client.js"></script>
+</body>
+</html>
