@@ -7,7 +7,7 @@ app.use(express.static('public'));
 
 // --- GAME SETTINGS ---
 const FPS = 60;
-let mapRadius = 6000; // Large Map (3x)
+let mapRadius = 6000; // Large Map
 const MIN_MAP_RADIUS = 500;
 const SHRINK_RATE = 0.5; 
 
@@ -29,6 +29,9 @@ class Snake {
         this.score = 0;
         this.speed = 3;
         
+        // State
+        this.isDead = false;
+        
         // Initialize body
         for(let i=0; i<this.length; i++) {
             this.points.push({x: x, y: y});
@@ -38,9 +41,13 @@ class Snake {
         this.boostTimer = 0;
         this.invulnerable = false;
         this.shieldTimer = 0;
+        
+        this.poisonTimer = 0; 
     }
 
     update() {
+        if (this.isDead) return 'dead';
+
         // Speed Logic
         let currentSpeed = this.speed;
         if (this.isBoosting || this.boostTimer > 0) currentSpeed = 6;
@@ -62,10 +69,17 @@ class Snake {
             this.points.pop();
         }
 
-        // Out of Bounds Check (Poison)
+        // POISON ZONE LOGIC
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
-            this.length = Math.max(10, this.length - 0.5);
+            this.poisonTimer++;
+            if (this.poisonTimer > 300) { // 5 seconds
+                return 'die'; 
+            }
+        } else {
+            this.poisonTimer = 0; 
         }
+        
+        return 'alive';
     }
 }
 
@@ -75,38 +89,73 @@ let foods = [];
 let activeMines = [];
 let nets = [];
 
-// Initial Food Spawn (High count for large map)
+// Initial Food Spawn
 for(let i=0; i<600; i++) spawnFood();
 
-function spawnFood() {
-    const angle = Math.random() * Math.PI * 2;
-    const r = Math.random() * mapRadius;
-    const typeRoll = Math.random();
-    let type = 'normal';
+function spawnFood(x, y, specificType) {
+    let spawnX = x;
+    let spawnY = y;
     
-    // Drop rates
-    if (typeRoll < 0.05) type = 'boost';
-    else if (typeRoll < 0.1) type = 'shield';
-    else if (typeRoll < 0.15) type = 'mine';
+    if (spawnX === undefined || spawnY === undefined) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * mapRadius;
+        spawnX = Math.cos(angle) * r;
+        spawnY = Math.sin(angle) * r;
+    }
+
+    let type = 'normal';
+    if (specificType) {
+        type = specificType;
+    } else {
+        const typeRoll = Math.random();
+        if (typeRoll < 0.05) type = 'boost';
+        else if (typeRoll < 0.1) type = 'shield';
+        else if (typeRoll < 0.15) type = 'mine';
+    }
 
     foods.push({
-        x: Math.cos(angle) * r,
-        y: Math.sin(angle) * r,
+        x: spawnX,
+        y: spawnY,
         type: type,
         radius: type === 'normal' ? 6 : 10,
         id: Math.random()
     });
 }
 
+function scatterFood(x, y) {
+    // Add randomness to spread the food (scatter effect)
+    const scatterRange = 30; // 30px spread
+    const offsetX = (Math.random() - 0.5) * scatterRange;
+    const offsetY = (Math.random() - 0.5) * scatterRange;
+    spawnFood(x + offsetX, y + offsetY, 'normal');
+}
+
+function killPlayer(player) {
+    if(player.isDead) return;
+    
+    player.isDead = true;
+
+    // 1. Scatter body segments
+    // Drop more food, but scattered
+    for (let i = 0; i < player.points.length; i += 2) {
+        const pt = player.points[i];
+        scatterFood(pt.x, pt.y);
+    }
+
+    // Notify client about death
+    io.to(player.id).emit('game_over', { score: player.score });
+}
+
 // --- SOCKET CONNECTION ---
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
+    // Create player but allow client to request spawn
+    // For now auto-spawn to keep simple logic initially
     players[socket.id] = new Snake(socket.id, 0, 0);
 
     socket.on('input', (data) => {
-        if(players[socket.id]) {
+        if(players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
-            // Smooth turn
             let diff = data.angle - p.angle;
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
@@ -114,9 +163,25 @@ io.on('connection', (socket) => {
             p.isBoosting = data.isBoosting;
         }
     });
+    
+    // NEW: Handle Respawn Request
+    socket.on('respawn', () => {
+        if (players[socket.id]) {
+            // Reset player
+            let p = players[socket.id];
+            p.isDead = false;
+            p.x = (Math.random() - 0.5) * 1000;
+            p.y = (Math.random() - 0.5) * 1000;
+            p.length = 50;
+            p.score = 0;
+            p.points = [];
+            p.poisonTimer = 0;
+            for(let i=0; i<p.length; i++) p.points.push({x: p.x, y: p.y});
+        }
+    });
 
     socket.on('cast_net', () => {
-        if(players[socket.id]) {
+        if(players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             nets.push({
                 x: p.x + Math.cos(p.angle) * 150,
@@ -129,21 +194,26 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log('Player disconnected:', socket.id);
         delete players[socket.id];
     });
 });
 
 // --- GAME LOOP ---
 setInterval(() => {
-    // Shrink Map
     if(mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
 
     for (let id in players) {
         let p = players[id];
-        p.update();
+        
+        if (p.isDead) continue; // Skip dead players
 
-        // Check Food Collision
+        const status = p.update();
+        if (status === 'die') {
+            killPlayer(p);
+            continue;
+        }
+
+        // Food Collision
         for(let i=foods.length-1; i>=0; i--) {
             let f = foods[i];
             if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
@@ -157,44 +227,60 @@ setInterval(() => {
             }
         }
 
-        // CUTTING MECHANIC (Collision with other snakes)
+        // Collision with others
         for(let otherId in players) {
             if(id === otherId) continue;
             let enemy = players[otherId];
-            if(enemy.invulnerable) continue;
+            if(enemy.isDead || p.invulnerable) continue;
 
-            // Check collision with enemy body segments
-            for(let i=5; i<enemy.points.length; i++) {
+            let crashed = false;
+            for(let i=0; i<enemy.points.length; i++) {
                 if(dist(p.x, p.y, enemy.points[i].x, enemy.points[i].y) < p.thickness + enemy.thickness) {
-                    // Cut confirmed
-                    let stolen = enemy.points.length - i;
-                    enemy.points.splice(i); // Remove tail
-                    enemy.length = enemy.points.length;
-                    
-                    // Reward attacker
-                    p.score += stolen * 10;
-                    p.length += stolen * 0.5;
+                    crashed = true;
                     break;
                 }
+            }
+
+            if (crashed) {
+                killPlayer(p); 
+                if(!enemy.isDead) enemy.score += 100;
+                break;
             }
         }
     }
 
-    // Update Mines
+    // Mines
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
-            // Explode
             for(let id in players) {
-                if(dist(players[id].x, players[id].y, activeMines[i].x, activeMines[i].y) < 150) {
-                    if(!players[id].invulnerable) players[id].length /= 2;
+                let p = players[id];
+                if(p.isDead) continue;
+                
+                let d = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
+                if(d < 150) {
+                    if(!p.invulnerable) {
+                        if (d < 50) { 
+                            killPlayer(p);
+                        } else {
+                            p.length = Math.floor(p.length / 2);
+                        }
+                    }
                 }
             }
             activeMines.splice(i, 1);
         }
     }
 
-    // Broadcast State
+    // Nets
+    for(let i=nets.length-1; i>=0; i--) {
+        nets[i].timer--;
+        if(nets[i].timer <= 0) nets.splice(i, 1);
+    }
+
+    // Filter out dead players from state sent to client (optional, but cleaner)
+    // Actually we keep them so we can stop rendering them, or handle it client side.
+    // Let's handle visibility client side.
     io.emit('state', { players, foods, activeMines, nets, mapRadius });
 }, 1000/FPS);
 
