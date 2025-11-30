@@ -5,18 +5,18 @@ const io = require('socket.io')(http);
 
 app.use(express.static('public'));
 
-// --- GAME SETTINGS ---
+// --- OYUN AYARLARI ---
 const FPS = 60;
-let mapRadius = 6000; // Large Map
+let mapRadius = 6000; // Harita Büyüklüğü
 const MIN_MAP_RADIUS = 500;
 const SHRINK_RATE = 0.5; 
 
-// --- MATH HELPERS ---
+// --- YARDIMCI MATEMATİK ---
 function dist(x1, y1, x2, y2) {
     return Math.hypot(x2 - x1, y2 - y1);
 }
 
-// --- CLASSES ---
+// --- SINIFLAR ---
 class Snake {
     constructor(id, x, y) {
         this.id = id;
@@ -25,14 +25,14 @@ class Snake {
         this.angle = Math.random() * Math.PI * 2;
         this.points = [];
         this.length = 50; 
-        this.thickness = 12; // Starting thickness
+        this.thickness = 12; // Başlangıç kalınlığı
         this.score = 0;
         this.speed = 3;
         
-        // State
+        // Durumlar
         this.isDead = false;
         
-        // Initialize body
+        // Vücut Başlangıcı
         for(let i=0; i<this.length; i++) {
             this.points.push({x: x, y: y});
         }
@@ -43,45 +43,44 @@ class Snake {
         this.shieldTimer = 0;
         
         this.poisonTimer = 0; 
-
-        // Cooldowns
-        this.lastNetTime = 0; // Timestamp for net casting
+        
+        // Yetenek Bekleme Süresi (Cooldown)
+        this.lastNetTime = 0; 
     }
 
     update() {
         if (this.isDead) return 'dead';
 
-        // Speed Logic
+        // Hız Mantığı
         let currentSpeed = this.speed;
         if (this.isBoosting || this.boostTimer > 0) currentSpeed = 6;
         
-        // Handle Timers
+        // Sayaçlar
         if (this.boostTimer > 0) this.boostTimer--;
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
         }
 
-        // --- NEW: DYNAMIC THICKNESS LOGIC ---
-        // Base thickness 12, increases slightly as length grows.
-        // Capped at 35 to prevent it from getting too big.
+        // --- DİNAMİK KALINLIK ---
+        // Yılan uzadıkça kalınlaşır (Max 35)
         this.thickness = 12 + (this.length * 0.02); 
         if (this.thickness > 35) this.thickness = 35;
 
-        // Movement
+        // Hareket
         this.x += Math.cos(this.angle) * currentSpeed;
         this.y += Math.sin(this.angle) * currentSpeed;
 
-        // Body Tracking
+        // Vücut Takibi
         this.points.unshift({x: this.x, y: this.y});
         while (this.points.length > this.length) {
             this.points.pop();
         }
 
-        // POISON ZONE LOGIC
+        // ZEHİR (ALAN DIŞI) MANTIĞI
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
-            if (this.poisonTimer > 300) { // 5 seconds
+            if (this.poisonTimer > 300) { // 5 saniye
                 return 'die'; 
             }
         } else {
@@ -92,13 +91,13 @@ class Snake {
     }
 }
 
-// --- GLOBAL STATE ---
+// --- GLOBAL DURUM ---
 let players = {};
 let foods = [];
 let activeMines = [];
 let nets = [];
 
-// Initial Food Spawn
+// Başlangıç Yemleri
 for(let i=0; i<600; i++) spawnFood();
 
 function spawnFood(x, y, specificType) {
@@ -143,19 +142,19 @@ function killPlayer(player) {
     
     player.isDead = true;
 
-    // 1. Scatter body segments
+    // 1. Vücudu parçalayıp yeme dönüştür
     for (let i = 0; i < player.points.length; i += 2) {
         const pt = player.points[i];
         scatterFood(pt.x, pt.y);
     }
 
-    // 2. Clear body
+    // 2. Vücudu tamamen sil
     player.points = []; 
 
     io.to(player.id).emit('game_over', { score: player.score });
 }
 
-// --- SOCKET CONNECTION ---
+// --- SOCKET BAĞLANTISI ---
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
     players[socket.id] = new Snake(socket.id, 0, 0);
@@ -181,7 +180,7 @@ io.on('connection', (socket) => {
             p.score = 0;
             p.points = [];
             p.poisonTimer = 0;
-            p.lastNetTime = 0; // Reset cooldown on spawn
+            p.lastNetTime = 0;
             for(let i=0; i<p.length; i++) p.points.push({x: p.x, y: p.y});
         }
     });
@@ -190,9 +189,9 @@ io.on('connection', (socket) => {
         if(players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             
-            // --- NEW: COOLDOWN LOGIC (30 Seconds) ---
+            // --- AĞ ATMA BEKLEME SÜRESİ (30 Saniye) ---
             const now = Date.now();
-            if (now - p.lastNetTime > 30000) { // 30000 ms = 30 seconds
+            if (now - p.lastNetTime > 30000) { 
                 p.lastNetTime = now;
                 
                 nets.push({
@@ -200,7 +199,7 @@ io.on('connection', (socket) => {
                     y: p.y + Math.sin(p.angle) * 150,
                     radius: 100,
                     owner: p.id,
-                    timer: 120
+                    timer: 120 // Ağın yerde kalma süresi (2 saniye)
                 });
             }
         }
@@ -211,7 +210,7 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- GAME LOOP ---
+// --- OYUN DÖNGÜSÜ ---
 setInterval(() => {
     if(mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
 
@@ -226,7 +225,7 @@ setInterval(() => {
             continue;
         }
 
-        // Food Collision
+        // Yem Yeme
         for(let i=foods.length-1; i>=0; i--) {
             let f = foods[i];
             if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
@@ -240,7 +239,26 @@ setInterval(() => {
             }
         }
 
-        // Collision with others
+        // --- AĞ (NET) ETKİLEŞİMİ (YENİ) ---
+        for (let n of nets) {
+            // Kendi ağımızdan etkilenmeyiz (Sadece rakipler)
+            if (n.owner !== p.id) {
+                // Rakibin ağına girdik mi?
+                if (dist(p.x, p.y, n.x, n.y) < n.radius) {
+                    if (!p.invulnerable) {
+                        // Boyunu azalt (Eritme etkisi)
+                        p.length -= 1.0; 
+                        
+                        // Çok küçülürse ölür
+                        if (p.length < 10) {
+                            killPlayer(p);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Diğer Yılanlarla Çarpışma
         for(let otherId in players) {
             if(id === otherId) continue;
             let enemy = players[otherId];
@@ -262,7 +280,7 @@ setInterval(() => {
         }
     }
 
-    // Mines
+    // MAYINLAR
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
@@ -272,6 +290,7 @@ setInterval(() => {
                 
                 let d = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
                 
+                // Bombaya yakalanan direkt ölür
                 if(d < 150) {
                     if(!p.invulnerable) {
                          killPlayer(p);
@@ -282,7 +301,7 @@ setInterval(() => {
         }
     }
 
-    // Nets
+    // Ağların Süresini Azalt
     for(let i=nets.length-1; i>=0; i--) {
         nets[i].timer--;
         if(nets[i].timer <= 0) nets.splice(i, 1);
