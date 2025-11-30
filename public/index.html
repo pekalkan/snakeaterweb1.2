@@ -31,22 +31,22 @@
         }
         #respawnBtn:hover { background: #338833; transform: scale(1.05); }
 
-        /* SHRINK WARNING STYLE */
+        /* WARNING MESSAGES */
         #shrinkWarning {
             display: none;
-            position: absolute;
-            top: 10%;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 32px;
-            font-weight: bold;
-            color: #ff0000;
+            position: absolute; top: 10%; left: 50%; transform: translateX(-50%);
+            font-size: 32px; font-weight: bold; color: #ff0000;
             text-shadow: 2px 2px 4px #000;
-            background: rgba(0,0,0,0.6);
-            padding: 10px 20px;
-            border-radius: 10px;
-            z-index: 15;
+            background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 10px; z-index: 15;
             animation: blink 1s infinite;
+        }
+
+        #shrinkStopped {
+            display: none;
+            position: absolute; top: 10%; left: 50%; transform: translateX(-50%);
+            font-size: 32px; font-weight: bold; color: #00ff00; /* Green for safe */
+            text-shadow: 2px 2px 4px #000;
+            background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 10px; z-index: 15;
         }
         
         @keyframes blink {
@@ -64,6 +64,7 @@
     </div>
 
     <div id="shrinkWarning">⚠️ WARNING: ZONE SHRINKING ⚠️</div>
+    <div id="shrinkStopped">⛔ ZONE STABILIZED ⛔</div>
 
     <div id="gameOverScreen" class="hidden">
         <h1>GAME OVER</h1>

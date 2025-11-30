@@ -11,11 +11,13 @@ const statsBox = document.getElementById('stats');
 const netBox = document.getElementById('netStatus');
 const speedBox = document.getElementById('speedStatus');
 const shrinkWarningBox = document.getElementById('shrinkWarning');
+const shrinkStoppedBox = document.getElementById('shrinkStopped');
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
 let mouseX = 0, mouseY = 0, isBoosting = false;
+let stopMessageShown = false; // Flag to show stop message only once
 
 window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 window.addEventListener('mousedown', () => isBoosting = true);
@@ -44,11 +46,34 @@ socket.on('game_over', (data) => {
 socket.on('state', (state) => {
     const me = state.players[socket.id];
     
-    // --- UPDATED: Warning logic uses the specific flag for 3-second display ---
-    if (state.shouldShowWarning) {
-        shrinkWarningBox.style.display = 'block';
+    // --- RESET FLAG IF GAME RESTARTS (Map gets big) ---
+    if (state.mapRadius > 1000) {
+        stopMessageShown = false;
+        shrinkStoppedBox.style.display = 'none';
+    }
+
+    // --- SHRINK MESSAGE LOGIC ---
+    if (state.isMapFixed) {
+        // Map stopped shrinking
+        shrinkWarningBox.style.display = 'none'; // Hide warning
+        
+        if (!stopMessageShown) {
+            // Show "Stopped" message once
+            shrinkStoppedBox.style.display = 'block';
+            stopMessageShown = true;
+            
+            // Hide after 3 seconds
+            setTimeout(() => {
+                shrinkStoppedBox.style.display = 'none';
+            }, 3000);
+        }
     } else {
-        shrinkWarningBox.style.display = 'none';
+        // Map is running (waiting or shrinking)
+        if (state.shouldShowWarning) {
+            shrinkWarningBox.style.display = 'block';
+        } else {
+            shrinkWarningBox.style.display = 'none';
+        }
     }
 
     if(me && !me.isDead) {

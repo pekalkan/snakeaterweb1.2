@@ -8,7 +8,7 @@ app.use(express.static('public'));
 // --- GAME SETTINGS ---
 const FPS = 60;
 let mapRadius = 6000; // Large Map
-const MIN_MAP_RADIUS = 0; // FIXED: Changed from 500 to 0 (Shrink to death)
+const MIN_MAP_RADIUS = 500; // FIXED: Stop shrinking at this size
 const SHRINK_RATE = 1.0; 
 const NET_COOLDOWN_MS = 30000; // 30 Seconds
 
@@ -26,26 +26,23 @@ class Snake {
         this.angle = Math.random() * Math.PI * 2;
         this.points = [];
         this.length = 50; 
-        this.thickness = 12; // Base thickness
+        this.thickness = 12; 
         this.score = 0;
         this.speed = 3;
         
-        // State
         this.isDead = false;
         
-        // Initialize body
         for(let i=0; i<this.length; i++) {
             this.points.push({x: x, y: y});
         }
         
-        this.isBoosting = false; // Manual boost (Space/Click)
-        this.boostTimer = 0;     // Power-up boost (Yellow Orb)
+        this.isBoosting = false; 
+        this.boostTimer = 0;     
         this.invulnerable = false;
         this.shieldTimer = 0;
         
         this.poisonTimer = 0; 
         
-        // Timers
         this.lastNetTime = 0; 
         this.currentNetCooldown = 0;
         this.massDropTimer = 0; 
@@ -79,32 +76,26 @@ class Snake {
             this.massDropTimer = 0;
         }
 
-        // Handle Shield
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
         }
 
-        // Net Cooldown
         const now = Date.now();
         const timePassed = now - this.lastNetTime;
         this.currentNetCooldown = Math.max(0, NET_COOLDOWN_MS - timePassed);
 
-        // Dynamic Thickness
         this.thickness = 12 + (this.length * 0.02); 
         if (this.thickness > 35) this.thickness = 35;
 
-        // Movement
         this.x += Math.cos(this.angle) * currentSpeed;
         this.y += Math.sin(this.angle) * currentSpeed;
 
-        // Body Tracking
         this.points.unshift({x: this.x, y: this.y});
         while (this.points.length > this.length) {
             this.points.pop();
         }
 
-        // Poison Logic
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
             if (this.poisonTimer > 300) return 'die'; 
@@ -135,7 +126,7 @@ function spawnFood(x, y, specificType) {
     
     if (spawnX === undefined || spawnY === undefined) {
         const angle = Math.random() * Math.PI * 2;
-        const r = Math.random() * Math.max(100, mapRadius); // Spawn within current radius
+        const r = Math.random() * Math.max(100, mapRadius); 
         spawnX = Math.cos(angle) * r;
         spawnY = Math.sin(angle) * r;
     }
@@ -196,7 +187,6 @@ io.on('connection', (socket) => {
         if (players[socket.id]) {
             let p = players[socket.id];
             p.isDead = false;
-            // Respawn safely inside current map radius
             const safeR = Math.max(100, mapRadius - 200);
             p.x = (Math.random() - 0.5) * safeR;
             p.y = (Math.random() - 0.5) * safeR;
@@ -234,26 +224,36 @@ io.on('connection', (socket) => {
 // --- GAME LOOP ---
 setInterval(() => {
     // --- WAVE SHRINKING LOGIC ---
-    shrinkTimer++;
-    if (isShrinking) {
-        // Shrink Phase (20s)
-        if (mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
-        
-        if (shrinkTimer > 1200) {
-            isShrinking = false;
-            shrinkTimer = 0;
-        }
+    let shouldShowWarning = false;
+    let isMapFixed = false;
+
+    // Check if map reached minimum size
+    if (mapRadius <= MIN_MAP_RADIUS) {
+        mapRadius = MIN_MAP_RADIUS;
+        isShrinking = false;
+        isMapFixed = true; // Tell client map is stopped
     } else {
-        // Wait Phase (20s)
-        if (shrinkTimer > 1200) {
-            isShrinking = true;
-            shrinkTimer = 0;
+        // Continue Cycle
+        shrinkTimer++;
+        if (isShrinking) {
+            // Shrink Phase
+            mapRadius -= SHRINK_RATE;
+            
+            // Show warning only for first 3 seconds
+            if (shrinkTimer <= 180) shouldShowWarning = true;
+
+            if (shrinkTimer > 1200) { // 20s
+                isShrinking = false;
+                shrinkTimer = 0;
+            }
+        } else {
+            // Wait Phase
+            if (shrinkTimer > 1200) { // 20s
+                isShrinking = true;
+                shrinkTimer = 0;
+            }
         }
     }
-    
-    // NEW: Calculate specific warning flag (Only true for first 3 seconds of shrinking)
-    // 180 frames = 3 seconds (60fps * 3)
-    const shouldShowWarning = isShrinking && shrinkTimer <= 180;
 
     for (let id in players) {
         let p = players[id];
@@ -348,8 +348,8 @@ setInterval(() => {
         if(nets[i].timer <= 0) nets.splice(i, 1);
     }
 
-    // Send State (Sending shouldShowWarning instead of isShrinking)
-    io.emit('state', { players, foods, activeMines, nets, mapRadius, shouldShowWarning });
+    // SEND STATE (Added isMapFixed)
+    io.emit('state', { players, foods, activeMines, nets, mapRadius, shouldShowWarning, isMapFixed });
 }, 1000/FPS);
 
 http.listen(3000, () => console.log('Server running on port 3000'));
