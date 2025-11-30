@@ -17,7 +17,7 @@ canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
 let mouseX = 0, mouseY = 0, isBoosting = false;
-let stopMessageShown = false; // Flag to show stop message only once
+let stopMessageShown = false; 
 
 window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 window.addEventListener('mousedown', () => isBoosting = true);
@@ -46,29 +46,21 @@ socket.on('game_over', (data) => {
 socket.on('state', (state) => {
     const me = state.players[socket.id];
     
-    // --- RESET FLAG IF GAME RESTARTS (Map gets big) ---
+    // Reset "Stop Message" flag if game restarts
     if (state.mapRadius > 1000) {
         stopMessageShown = false;
         shrinkStoppedBox.style.display = 'none';
     }
 
-    // --- SHRINK MESSAGE LOGIC ---
+    // Shrink UI Messages
     if (state.isMapFixed) {
-        // Map stopped shrinking
-        shrinkWarningBox.style.display = 'none'; // Hide warning
-        
+        shrinkWarningBox.style.display = 'none'; 
         if (!stopMessageShown) {
-            // Show "Stopped" message once
             shrinkStoppedBox.style.display = 'block';
             stopMessageShown = true;
-            
-            // Hide after 3 seconds
-            setTimeout(() => {
-                shrinkStoppedBox.style.display = 'none';
-            }, 3000);
+            setTimeout(() => { shrinkStoppedBox.style.display = 'none'; }, 3000);
         }
     } else {
-        // Map is running (waiting or shrinking)
         if (state.shouldShowWarning) {
             shrinkWarningBox.style.display = 'block';
         } else {
@@ -97,7 +89,7 @@ socket.on('state', (state) => {
         }
     }
 
-    // Render Game
+    // Clear Screen
     ctx.fillStyle = '#12161c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -109,12 +101,27 @@ socket.on('state', (state) => {
         ctx.translate(canvas.width/2, canvas.height/2); 
     }
 
+    // --- YENİ: ZEHİRLİ ALAN (MOR ARKA PLAN) ---
+    // "evenodd" kuralı ile haritanın dışını boyuyoruz
+    ctx.save();
+    ctx.beginPath();
+    // 1. İçteki Güvenli Daire
+    ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
+    // 2. Dışarıdaki Devasa Dikdörtgen (Tüm evreni kaplar)
+    ctx.rect(-20000, -20000, 40000, 40000);
+    // 3. İkisinin arasındaki alanı boya (Yarı saydam mor)
+    ctx.fillStyle = 'rgba(75, 0, 130, 0.25)'; // Indigo/Purple tint
+    ctx.fill('evenodd');
+    ctx.restore();
+
+    // Harita Sınır Çizgisi
     ctx.beginPath();
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
-    ctx.strokeStyle = '#555';
+    ctx.strokeStyle = '#8844ff'; // Sınır çizgisini de morumsu yaptım
     ctx.lineWidth = 5;
     ctx.stroke();
 
+    // Objeler
     state.activeMines.forEach(m => drawCircle(m.x, m.y, m.radius, 'rgba(255,0,0,0.3)'));
     state.nets.forEach(n => drawCircle(n.x, n.y, n.radius, 'rgba(138, 43, 226, 0.4)'));
 
@@ -126,6 +133,7 @@ socket.on('state', (state) => {
         drawCircle(f.x, f.y, f.radius, color);
     });
 
+    // Yılanlar
     for(let id in state.players) {
         let p = state.players[id];
         if (p.isDead) continue; 
@@ -157,10 +165,15 @@ function drawMinimap(state, me) {
     const scale = 150 / (state.mapRadius * 2); 
     const cx = 75, cy = 75;
 
-    miniCtx.strokeStyle = '#888';
+    // Mini Harita Sınırı
+    miniCtx.strokeStyle = '#8844ff';
     miniCtx.beginPath();
     miniCtx.arc(cx, cy, state.mapRadius * scale, 0, Math.PI*2);
     miniCtx.stroke();
+    
+    // Mini Harita Zehirli Alan (İsteğe bağlı, küçük olduğu için çok belli olmaz ama ekleyelim)
+    miniCtx.fillStyle = 'rgba(75, 0, 130, 0.3)';
+    miniCtx.fill(); 
 
     for(let id in state.players) {
         let p = state.players[id];
