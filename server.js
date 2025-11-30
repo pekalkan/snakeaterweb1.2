@@ -5,18 +5,18 @@ const io = require('socket.io')(http);
 
 app.use(express.static('public'));
 
-// --- GAME SETTINGS ---
+// --- OYUN AYARLARI ---
 const FPS = 60;
-let mapRadius = 6000; // Large Map
+let mapRadius = 6000; // Harita Büyüklüğü
 const MIN_MAP_RADIUS = 500;
 const SHRINK_RATE = 0.5; 
 
-// --- MATH HELPERS ---
+// --- YARDIMCI MATEMATİK ---
 function dist(x1, y1, x2, y2) {
     return Math.hypot(x2 - x1, y2 - y1);
 }
 
-// --- CLASSES ---
+// --- SINIFLAR ---
 class Snake {
     constructor(id, x, y) {
         this.id = id;
@@ -29,10 +29,10 @@ class Snake {
         this.score = 0;
         this.speed = 3;
         
-        // State
+        // Durumlar
         this.isDead = false;
         
-        // Initialize body
+        // Vücut Başlangıcı
         for(let i=0; i<this.length; i++) {
             this.points.push({x: x, y: y});
         }
@@ -48,31 +48,31 @@ class Snake {
     update() {
         if (this.isDead) return 'dead';
 
-        // Speed Logic
+        // Hız Mantığı
         let currentSpeed = this.speed;
         if (this.isBoosting || this.boostTimer > 0) currentSpeed = 6;
         
-        // Handle Timers
+        // Sayaçlar
         if (this.boostTimer > 0) this.boostTimer--;
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
         }
 
-        // Movement
+        // Hareket
         this.x += Math.cos(this.angle) * currentSpeed;
         this.y += Math.sin(this.angle) * currentSpeed;
 
-        // Body Tracking
+        // Vücut Takibi
         this.points.unshift({x: this.x, y: this.y});
         while (this.points.length > this.length) {
             this.points.pop();
         }
 
-        // POISON ZONE LOGIC
+        // ZEHİR (ALAN DIŞI) MANTIĞI
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
-            if (this.poisonTimer > 300) { // 5 seconds
+            if (this.poisonTimer > 300) { // 5 saniye (60fps * 5)
                 return 'die'; 
             }
         } else {
@@ -83,13 +83,13 @@ class Snake {
     }
 }
 
-// --- GLOBAL STATE ---
+// --- GLOBAL DURUM ---
 let players = {};
 let foods = [];
 let activeMines = [];
 let nets = [];
 
-// Initial Food Spawn
+// Başlangıç Yemleri
 for(let i=0; i<600; i++) spawnFood();
 
 function spawnFood(x, y, specificType) {
@@ -123,8 +123,8 @@ function spawnFood(x, y, specificType) {
 }
 
 function scatterFood(x, y) {
-    // Add randomness to spread the food (scatter effect)
-    const scatterRange = 30; // 30px spread
+    // Yemleri etrafa saçmak için rastgelelik
+    const scatterRange = 40; 
     const offsetX = (Math.random() - 0.5) * scatterRange;
     const offsetY = (Math.random() - 0.5) * scatterRange;
     spawnFood(x + offsetX, y + offsetY, 'normal');
@@ -135,22 +135,22 @@ function killPlayer(player) {
     
     player.isDead = true;
 
-    // 1. Scatter body segments
-    // Drop more food, but scattered
+    // 1. Vücudu parçalayıp yeme dönüştür
     for (let i = 0; i < player.points.length; i += 2) {
         const pt = player.points[i];
         scatterFood(pt.x, pt.y);
     }
 
-    // Notify client about death
+    // 2. ÖNEMLİ: Vücudu tamamen sil (Ekranda yeşil kısım kalmasın)
+    player.points = []; 
+
+    // İstemciye öldüğünü bildir
     io.to(player.id).emit('game_over', { score: player.score });
 }
 
-// --- SOCKET CONNECTION ---
+// --- SOCKET BAĞLANTISI ---
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
-    // Create player but allow client to request spawn
-    // For now auto-spawn to keep simple logic initially
     players[socket.id] = new Snake(socket.id, 0, 0);
 
     socket.on('input', (data) => {
@@ -164,10 +164,8 @@ io.on('connection', (socket) => {
         }
     });
     
-    // NEW: Handle Respawn Request
     socket.on('respawn', () => {
         if (players[socket.id]) {
-            // Reset player
             let p = players[socket.id];
             p.isDead = false;
             p.x = (Math.random() - 0.5) * 1000;
@@ -198,14 +196,14 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- GAME LOOP ---
+// --- OYUN DÖNGÜSÜ ---
 setInterval(() => {
     if(mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
 
     for (let id in players) {
         let p = players[id];
         
-        if (p.isDead) continue; // Skip dead players
+        if (p.isDead) continue; 
 
         const status = p.update();
         if (status === 'die') {
@@ -213,21 +211,21 @@ setInterval(() => {
             continue;
         }
 
-        // Food Collision
+        // Yem Yeme
         for(let i=foods.length-1; i>=0; i--) {
             let f = foods[i];
             if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
                 if(f.type === 'normal') { p.length += 5; p.score += 10; }
                 if(f.type === 'boost') p.boostTimer = 300;
                 if(f.type === 'shield') { p.invulnerable = true; p.shieldTimer = 300; }
-                if(f.type === 'mine') activeMines.push({x: f.x, y: f.y, radius: 150, timer: 180});
+                if(f.type === 'mine') activeMines.push({x: f.x, y: f.y, radius: 150, timer: 180}); // timer: 3 saniye
                 
                 foods.splice(i, 1);
                 spawnFood();
             }
         }
 
-        // Collision with others
+        // Diğer Yılanlarla Çarpışma
         for(let otherId in players) {
             if(id === otherId) continue;
             let enemy = players[otherId];
@@ -249,22 +247,23 @@ setInterval(() => {
         }
     }
 
-    // Mines
+    // MAYINLAR (BOMBA)
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
+            // Patlama Anı!
             for(let id in players) {
                 let p = players[id];
                 if(p.isDead) continue;
                 
+                // Bomba merkezine olan mesafe
                 let d = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
+                
+                // DÜZELTME: Eğer kafa, bombanın etki alanı (150px) içindeyse DİREKT ÖL.
+                // Eskiden < 50 yapıyorduk, o yüzden bazen ölmüyordu. Şimdi tüm alanda öldürücü.
                 if(d < 150) {
                     if(!p.invulnerable) {
-                        if (d < 50) { 
-                            killPlayer(p);
-                        } else {
-                            p.length = Math.floor(p.length / 2);
-                        }
+                         killPlayer(p);
                     }
                 }
             }
@@ -272,15 +271,12 @@ setInterval(() => {
         }
     }
 
-    // Nets
+    // Ağlar
     for(let i=nets.length-1; i>=0; i--) {
         nets[i].timer--;
         if(nets[i].timer <= 0) nets.splice(i, 1);
     }
 
-    // Filter out dead players from state sent to client (optional, but cleaner)
-    // Actually we keep them so we can stop rendering them, or handle it client side.
-    // Let's handle visibility client side.
     io.emit('state', { players, foods, activeMines, nets, mapRadius });
 }, 1000/FPS);
 
