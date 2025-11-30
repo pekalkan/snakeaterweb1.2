@@ -7,8 +7,9 @@ app.use(express.static('public'));
 
 // --- GAME SETTINGS ---
 const FPS = 60;
-let mapRadius = 6000; // Large Map
-const MIN_MAP_RADIUS = 500; // FIXED: Stop shrinking at this size
+const INITIAL_MAP_RADIUS = 6000;
+let mapRadius = INITIAL_MAP_RADIUS;
+const MIN_MAP_RADIUS = 500; // Stops shrinking here
 const SHRINK_RATE = 1.0; 
 const NET_COOLDOWN_MS = 30000; // 30 Seconds
 
@@ -19,33 +20,51 @@ function dist(x1, y1, x2, y2) {
 
 // --- CLASSES ---
 class Snake {
-    constructor(id, x, y) {
+    constructor(id) {
         this.id = id;
-        this.x = x;
-        this.y = y;
-        this.angle = Math.random() * Math.PI * 2;
+        this.username = "Unknown"; // New: Username
+        this.isReady = false;      // New: Lobby Ready Status
+        
+        // Game Properties (Initialized later)
+        this.x = 0;
+        this.y = 0;
+        this.angle = 0;
         this.points = [];
         this.length = 50; 
         this.thickness = 12; 
         this.score = 0;
         this.speed = 3;
-        
-        this.isDead = false;
-        
-        for(let i=0; i<this.length; i++) {
-            this.points.push({x: x, y: y});
-        }
+        this.isDead = false; // Initially alive, but needs game start to be active
         
         this.isBoosting = false; 
         this.boostTimer = 0;     
         this.invulnerable = false;
         this.shieldTimer = 0;
-        
         this.poisonTimer = 0; 
-        
         this.lastNetTime = 0; 
         this.currentNetCooldown = 0;
         this.massDropTimer = 0; 
+    }
+
+    reset(startX, startY) {
+        this.x = startX;
+        this.y = startY;
+        this.angle = Math.random() * Math.PI * 2;
+        this.points = [];
+        this.length = 50;
+        this.thickness = 12;
+        this.score = 0;
+        this.isDead = false;
+        this.isBoosting = false;
+        this.invulnerable = false;
+        this.shieldTimer = 0;
+        this.boostTimer = 0;
+        this.poisonTimer = 0;
+        
+        // Initialize body
+        for(let i=0; i<this.length; i++) {
+            this.points.push({x: this.x, y: this.y});
+        }
     }
 
     update() {
@@ -96,6 +115,7 @@ class Snake {
             this.points.pop();
         }
 
+        // Poison Logic
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
             if (this.poisonTimer > 300) return 'die'; 
@@ -112,13 +132,11 @@ let players = {};
 let foods = [];
 let activeMines = [];
 let nets = [];
+let gameRunning = false; // Is the game active?
 
 // Shrink State
 let isShrinking = false;
 let shrinkTimer = 0; 
-
-// Initial Food
-for(let i=0; i<420; i++) spawnFood();
 
 function spawnFood(x, y, specificType) {
     let spawnX = x;
@@ -166,14 +184,87 @@ function killPlayer(player) {
     }
     player.points = []; 
     io.to(player.id).emit('game_over', { score: player.score });
+    
+    // Check if game should end (0 or 1 player left)
+    checkWinCondition();
+}
+
+function checkWinCondition() {
+    if (!gameRunning) return;
+    
+    // Count alive players
+    const alivePlayers = Object.values(players).filter(p => !p.isDead);
+    
+    if (alivePlayers.length <= 1) {
+        // Game Over - Reset to lobby after 5 seconds
+        setTimeout(() => {
+            gameRunning = false;
+            mapRadius = INITIAL_MAP_RADIUS;
+            foods = [];
+            activeMines = [];
+            nets = [];
+            
+            // Reset all players to 'not ready'
+            Object.values(players).forEach(p => {
+                p.isReady = false;
+            });
+            
+            io.emit('return_to_lobby');
+        }, 5000);
+    }
+}
+
+function startGame() {
+    gameRunning = true;
+    mapRadius = INITIAL_MAP_RADIUS;
+    foods = [];
+    activeMines = [];
+    nets = [];
+    isShrinking = false;
+    shrinkTimer = 0;
+    
+    // Spawn Initial Food
+    for(let i=0; i<420; i++) spawnFood();
+    
+    // Reset all players
+    const safeR = Math.max(100, mapRadius - 500);
+    
+    Object.values(players).forEach(p => {
+        const sx = (Math.random() - 0.5) * safeR;
+        const sy = (Math.random() - 0.5) * safeR;
+        p.reset(sx, sy);
+    });
+
+    io.emit('game_started');
 }
 
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
-    players[socket.id] = new Snake(socket.id, 0, 0);
+    players[socket.id] = new Snake(socket.id);
+
+    // 1. Join Lobby with Username
+    socket.on('join_game', (username) => {
+        if(players[socket.id]) {
+            players[socket.id].username = username || "Guest";
+        }
+    });
+
+    // 2. Player Clicked Ready
+    socket.on('player_ready', () => {
+        if (players[socket.id]) {
+            players[socket.id].isReady = !players[socket.id].isReady; // Toggle
+            
+            // Check if everyone is ready to start
+            const allPlayers = Object.values(players);
+            // We need at least 1 player to start (for testing), usually 2
+            if (allPlayers.length > 0 && allPlayers.every(p => p.isReady)) {
+                startGame();
+            }
+        }
+    });
 
     socket.on('input', (data) => {
-        if(players[socket.id] && !players[socket.id].isDead) {
+        if(gameRunning && players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             let diff = data.angle - p.angle;
             while (diff < -Math.PI) diff += Math.PI * 2;
@@ -182,25 +273,9 @@ io.on('connection', (socket) => {
             p.isBoosting = data.isBoosting;
         }
     });
-    
-    socket.on('respawn', () => {
-        if (players[socket.id]) {
-            let p = players[socket.id];
-            p.isDead = false;
-            const safeR = Math.max(100, mapRadius - 200);
-            p.x = (Math.random() - 0.5) * safeR;
-            p.y = (Math.random() - 0.5) * safeR;
-            p.length = 50;
-            p.score = 0;
-            p.points = [];
-            p.poisonTimer = 0;
-            p.lastNetTime = 0;
-            for(let i=0; i<p.length; i++) p.points.push({x: p.x, y: p.y});
-        }
-    });
 
     socket.on('cast_net', () => {
-        if(players[socket.id] && !players[socket.id].isDead) {
+        if(gameRunning && players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             const now = Date.now();
             if (now - p.lastNetTime > NET_COOLDOWN_MS) { 
@@ -218,37 +293,45 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         delete players[socket.id];
+        // If game is running and player leaves, check win condition
+        if (gameRunning) checkWinCondition();
     });
 });
 
 // --- GAME LOOP ---
 setInterval(() => {
+    // A. LOBBY PHASE
+    if (!gameRunning) {
+        // Just send lobby data (who is connected, who is ready)
+        // We send minimal data for lobby
+        const lobbyData = Object.values(players).map(p => ({
+            username: p.username,
+            isReady: p.isReady
+        }));
+        io.emit('lobby_state', lobbyData);
+        return; // Don't run game logic
+    }
+
+    // B. GAME PHASE (Physics)
     // --- WAVE SHRINKING LOGIC ---
     let shouldShowWarning = false;
     let isMapFixed = false;
 
-    // Check if map reached minimum size
     if (mapRadius <= MIN_MAP_RADIUS) {
         mapRadius = MIN_MAP_RADIUS;
         isShrinking = false;
-        isMapFixed = true; // Tell client map is stopped
+        isMapFixed = true; 
     } else {
-        // Continue Cycle
         shrinkTimer++;
         if (isShrinking) {
-            // Shrink Phase
             mapRadius -= SHRINK_RATE;
-            
-            // Show warning only for first 3 seconds
             if (shrinkTimer <= 180) shouldShowWarning = true;
-
-            if (shrinkTimer > 1200) { // 20s
+            if (shrinkTimer > 1200) { 
                 isShrinking = false;
                 shrinkTimer = 0;
             }
         } else {
-            // Wait Phase
-            if (shrinkTimer > 1200) { // 20s
+            if (shrinkTimer > 1200) { 
                 isShrinking = true;
                 shrinkTimer = 0;
             }
@@ -348,8 +431,7 @@ setInterval(() => {
         if(nets[i].timer <= 0) nets.splice(i, 1);
     }
 
-    // SEND STATE (Added isMapFixed)
-    io.emit('state', { players, foods, activeMines, nets, mapRadius, shouldShowWarning, isMapFixed });
+    io.emit('game_state', { players, foods, activeMines, nets, mapRadius, shouldShowWarning, isMapFixed });
 }, 1000/FPS);
 
 http.listen(3000, () => console.log('Server running on port 3000'));

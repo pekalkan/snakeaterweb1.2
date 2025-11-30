@@ -4,14 +4,26 @@ const ctx = canvas.getContext('2d');
 const miniCanvas = document.getElementById('minimap');
 const miniCtx = miniCanvas.getContext('2d');
 
+// Screens
+const loginScreen = document.getElementById('loginScreen');
+const lobbyScreen = document.getElementById('lobbyScreen');
+const gameUI = document.getElementById('gameUI');
 const gameOverScreen = document.getElementById('gameOverScreen');
-const finalScoreText = document.getElementById('finalScore');
-const respawnBtn = document.getElementById('respawnBtn');
+const minimapEl = document.getElementById('minimap');
+
+// Inputs
+const usernameInput = document.getElementById('usernameInput');
+const joinBtn = document.getElementById('joinBtn');
+const readyBtn = document.getElementById('readyBtn');
+const playerList = document.getElementById('playerList');
+
+// UI Stats
 const statsBox = document.getElementById('stats');
 const netBox = document.getElementById('netStatus');
 const speedBox = document.getElementById('speedStatus');
 const shrinkWarningBox = document.getElementById('shrinkWarning');
 const shrinkStoppedBox = document.getElementById('shrinkStopped');
+const finalScoreText = document.getElementById('finalScore');
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
@@ -19,6 +31,61 @@ canvas.height = window.innerHeight;
 let mouseX = 0, mouseY = 0, isBoosting = false;
 let stopMessageShown = false; 
 
+// --- 1. LOGIN LOGIC ---
+joinBtn.addEventListener('click', () => {
+    const name = usernameInput.value || "Guest";
+    socket.emit('join_game', name);
+    loginScreen.style.display = 'none';
+    lobbyScreen.style.display = 'flex';
+});
+
+// --- 2. LOBBY LOGIC ---
+readyBtn.addEventListener('click', () => {
+    socket.emit('player_ready');
+    // Change button style temporarily to show feedback
+    readyBtn.style.background = '#888';
+});
+
+socket.on('lobby_state', (players) => {
+    // Render list of players in the lobby
+    playerList.innerHTML = '';
+    players.forEach(p => {
+        const row = document.createElement('div');
+        row.className = 'player-row';
+        
+        const statusClass = p.isReady ? 'ready-green' : 'ready-red';
+        const statusText = p.isReady ? 'READY' : 'WAITING';
+        
+        row.innerHTML = `<span>${p.username}</span> <span class="ready-status ${statusClass}">${statusText}</span>`;
+        playerList.appendChild(row);
+    });
+});
+
+// --- 3. GAME START LOGIC ---
+socket.on('game_started', () => {
+    lobbyScreen.style.display = 'none';
+    gameOverScreen.style.display = 'none'; // Hide game over if visible
+    gameUI.style.display = 'block';
+    minimapEl.style.display = 'block';
+});
+
+socket.on('return_to_lobby', () => {
+    gameUI.style.display = 'none';
+    minimapEl.style.display = 'none';
+    gameOverScreen.style.display = 'none';
+    lobbyScreen.style.display = 'flex';
+    
+    // Reset Ready Button Style
+    readyBtn.style.background = '#44aa44';
+});
+
+// --- GAME OVER LOGIC ---
+socket.on('game_over', (data) => {
+    finalScoreText.innerText = 'Final Score: ' + Math.floor(data.score);
+    gameOverScreen.style.display = 'flex';
+});
+
+// --- CONTROLS ---
 window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 window.addEventListener('mousedown', () => isBoosting = true);
 window.addEventListener('mouseup', () => isBoosting = false);
@@ -28,31 +95,18 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { if(e.code === 'Space') isBoosting = false; });
 
-respawnBtn.addEventListener('click', () => {
-    socket.emit('respawn');
-    gameOverScreen.classList.add('hidden'); 
-});
-
+// Input Loop
 setInterval(() => {
     const angle = Math.atan2(mouseY - canvas.height/2, mouseX - canvas.width/2);
     socket.emit('input', { angle, isBoosting });
 }, 1000/60);
 
-socket.on('game_over', (data) => {
-    finalScoreText.innerText = 'Final Score: ' + Math.floor(data.score);
-    gameOverScreen.classList.remove('hidden'); 
-});
 
-socket.on('state', (state) => {
+// --- MAIN GAME RENDER ---
+socket.on('game_state', (state) => {
     const me = state.players[socket.id];
     
-    // Reset "Stop Message" flag if game restarts
-    if (state.mapRadius > 1000) {
-        stopMessageShown = false;
-        shrinkStoppedBox.style.display = 'none';
-    }
-
-    // Shrink UI Messages
+    // UI Logic (Shrink, Stats)
     if (state.isMapFixed) {
         shrinkWarningBox.style.display = 'none'; 
         if (!stopMessageShown) {
@@ -61,11 +115,7 @@ socket.on('state', (state) => {
             setTimeout(() => { shrinkStoppedBox.style.display = 'none'; }, 3000);
         }
     } else {
-        if (state.shouldShowWarning) {
-            shrinkWarningBox.style.display = 'block';
-        } else {
-            shrinkWarningBox.style.display = 'none';
-        }
+        shrinkWarningBox.style.display = state.shouldShowWarning ? 'block' : 'none';
     }
 
     if(me && !me.isDead) {
@@ -89,39 +139,36 @@ socket.on('state', (state) => {
         }
     }
 
-    // Clear Screen
+    // Draw
     ctx.fillStyle = '#12161c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
     
+    // Camera
     if (me && !me.isDead) {
         ctx.translate(canvas.width/2 - me.x, canvas.height/2 - me.y);
     } else {
         ctx.translate(canvas.width/2, canvas.height/2); 
     }
 
-    // --- YENİ: ZEHİRLİ ALAN (MOR ARKA PLAN) ---
-    // "evenodd" kuralı ile haritanın dışını boyuyoruz
+    // Poison Zone Background
     ctx.save();
     ctx.beginPath();
-    // 1. İçteki Güvenli Daire
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
-    // 2. Dışarıdaki Devasa Dikdörtgen (Tüm evreni kaplar)
     ctx.rect(-20000, -20000, 40000, 40000);
-    // 3. İkisinin arasındaki alanı boya (Yarı saydam mor)
-    ctx.fillStyle = 'rgba(75, 0, 130, 0.25)'; // Indigo/Purple tint
+    ctx.fillStyle = 'rgba(75, 0, 130, 0.25)';
     ctx.fill('evenodd');
     ctx.restore();
 
-    // Harita Sınır Çizgisi
+    // Border
     ctx.beginPath();
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
-    ctx.strokeStyle = '#8844ff'; // Sınır çizgisini de morumsu yaptım
+    ctx.strokeStyle = '#8844ff';
     ctx.lineWidth = 5;
     ctx.stroke();
 
-    // Objeler
+    // Objects
     state.activeMines.forEach(m => drawCircle(m.x, m.y, m.radius, 'rgba(255,0,0,0.3)'));
     state.nets.forEach(n => drawCircle(n.x, n.y, n.radius, 'rgba(138, 43, 226, 0.4)'));
 
@@ -133,7 +180,7 @@ socket.on('state', (state) => {
         drawCircle(f.x, f.y, f.radius, color);
     });
 
-    // Yılanlar
+    // Snakes
     for(let id in state.players) {
         let p = state.players[id];
         if (p.isDead) continue; 
@@ -144,9 +191,11 @@ socket.on('state', (state) => {
         p.points.forEach(pt => drawCircle(pt.x, pt.y, p.thickness, color));
         drawCircle(p.x, p.y, p.thickness+2, '#fff'); 
         
+        // Name Tag
         ctx.fillStyle = 'white';
-        ctx.font = '12px Arial';
-        ctx.fillText(id.substring(0,4), p.x, p.y - 20);
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.username, p.x, p.y - 25);
     }
     ctx.restore();
 
@@ -162,16 +211,14 @@ function drawCircle(x, y, r, color) {
 
 function drawMinimap(state, me) {
     miniCtx.clearRect(0,0,150,150);
-    const scale = 150 / (state.mapRadius * 2); 
+    const scale = 150 / (6000 * 2); // Use Max Map Radius for consistent scale
     const cx = 75, cy = 75;
 
-    // Mini Harita Sınırı
     miniCtx.strokeStyle = '#8844ff';
     miniCtx.beginPath();
     miniCtx.arc(cx, cy, state.mapRadius * scale, 0, Math.PI*2);
     miniCtx.stroke();
     
-    // Mini Harita Zehirli Alan (İsteğe bağlı, küçük olduğu için çok belli olmaz ama ekleyelim)
     miniCtx.fillStyle = 'rgba(75, 0, 130, 0.3)';
     miniCtx.fill(); 
 

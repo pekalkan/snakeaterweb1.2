@@ -2,74 +2,86 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Snakeater Multiplayer</title>
+    <title>Snakeater Battle Royale</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #12161c; font-family: sans-serif; color: white; }
+        body { margin: 0; overflow: hidden; background: #12161c; font-family: 'Segoe UI', sans-serif; color: white; }
+        
+        /* GENERAL UI */
+        #gameUI { display: none; } /* Hidden until game starts */
         
         #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; z-index: 10; }
         .box { background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; margin-bottom: 5px; min-width: 150px; font-weight: bold;}
         
-        #minimap { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.5); border: 2px solid #555; border-radius: 50%; z-index: 10; }
+        #minimap { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.5); border: 2px solid #555; border-radius: 50%; z-index: 10; display: none;}
         
-        /* Game Over Screen */
+        /* WARNINGS */
+        #shrinkWarning, #shrinkStopped {
+            display: none; position: absolute; top: 10%; left: 50%; transform: translateX(-50%);
+            font-size: 32px; font-weight: bold; padding: 10px 20px; border-radius: 10px; z-index: 15;
+            background: rgba(0,0,0,0.6); text-shadow: 2px 2px 4px #000;
+        }
+        #shrinkWarning { color: #ff0000; animation: blink 1s infinite; }
+        #shrinkStopped { color: #00ff00; }
+        
+        /* LOGIN SCREEN */
+        #loginScreen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #12161c; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 50;
+        }
+        input { padding: 10px; font-size: 20px; margin-bottom: 20px; text-align: center; }
+        button { padding: 10px 30px; font-size: 20px; cursor: pointer; background: #44aa44; border: none; color: white; border-radius: 5px; }
+        button:hover { background: #338833; }
+
+        /* LOBBY SCREEN */
+        #lobbyScreen {
+            display: none; /* Hidden initially */
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #1a1e24; flex-direction: column; align-items: center; padding-top: 50px; z-index: 40;
+        }
+        #playerList { margin: 20px; width: 300px; text-align: left; }
+        .player-row { background: #333; padding: 10px; margin: 5px 0; display: flex; justify-content: space-between; border-radius: 4px; }
+        .ready-status { font-weight: bold; }
+        .ready-green { color: #0f0; }
+        .ready-red { color: #f55; }
+
+        /* GAME OVER */
         #gameOverScreen {
-            display: none; 
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 20;
-        }
-        #gameOverScreen.hidden { display: none !important; }
-        #gameOverScreen h1 { font-size: 60px; color: #ff4444; margin-bottom: 20px; text-shadow: 2px 2px 0 #000; }
-        #respawnBtn {
-            padding: 15px 40px; font-size: 24px; background: #44aa44; color: white;
-            border: none; border-radius: 5px; cursor: pointer; transition: 0.2s;
-        }
-        #respawnBtn:hover { background: #338833; transform: scale(1.05); }
-
-        /* WARNING MESSAGES */
-        #shrinkWarning {
-            display: none;
-            position: absolute; top: 10%; left: 50%; transform: translateX(-50%);
-            font-size: 32px; font-weight: bold; color: #ff0000;
-            text-shadow: 2px 2px 4px #000;
-            background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 10px; z-index: 15;
-            animation: blink 1s infinite;
-        }
-
-        #shrinkStopped {
-            display: none;
-            position: absolute; top: 10%; left: 50%; transform: translateX(-50%);
-            font-size: 32px; font-weight: bold; color: #00ff00; /* Green for safe */
-            text-shadow: 2px 2px 4px #000;
-            background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 10px; z-index: 15;
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.9); flex-direction: column; justify-content: center; align-items: center; z-index: 60;
         }
         
-        @keyframes blink {
-            0% { opacity: 1; }
-            50% { opacity: 0.2; }
-            100% { opacity: 1; }
-        }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.2; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <div class="box" id="stats">Score: 0</div>
-        <div class="box" id="speedStatus">Speed: Ready (Space)</div>
-        <div class="box" id="netStatus" style="color: #aaa;">Net: Ready (E)</div>
+
+    <div id="loginScreen">
+        <h1>SNAKEATER</h1>
+        <input type="text" id="usernameInput" placeholder="Enter Username" maxlength="10">
+        <button id="joinBtn">JOIN LOBBY</button>
     </div>
 
-    <div id="shrinkWarning">⚠️ WARNING: ZONE SHRINKING ⚠️</div>
-    <div id="shrinkStopped">⛔ ZONE STABILIZED ⛔</div>
+    <div id="lobbyScreen">
+        <h1>WAITING FOR PLAYERS...</h1>
+        <div id="playerList"></div>
+        <button id="readyBtn">I'M READY</button>
+        <p style="margin-top:20px; color:#aaa;">Game starts when everyone is READY</p>
+    </div>
 
-    <div id="gameOverScreen" class="hidden">
+    <div id="gameUI">
+        <div id="ui">
+            <div class="box" id="stats">Score: 0</div>
+            <div class="box" id="speedStatus">Speed: Ready (Space)</div>
+            <div class="box" id="netStatus" style="color: #aaa;">Net: Ready (E)</div>
+        </div>
+        <div id="shrinkWarning">⚠️ WARNING: ZONE SHRINKING ⚠️</div>
+        <div id="shrinkStopped">⛔ ZONE STABILIZED ⛔</div>
+    </div>
+
+    <div id="gameOverScreen">
         <h1>GAME OVER</h1>
         <h2 id="finalScore">Final Score: 0</h2>
-        <button id="respawnBtn">Play Again</button>
+        <p>Returning to lobby in 5 seconds...</p>
     </div>
 
     <canvas id="gameCanvas"></canvas>
