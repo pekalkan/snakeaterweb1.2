@@ -108,3 +108,15 @@ function drawMinimap(state, me) {
         miniCtx.fill();
     }
 }
+
+// Game Over Handler
+socket.on('game_over', (data) => {
+    document.getElementById('finalScore').innerText = `Final Score: ${data.score}`;
+    document.getElementById('gameOverScreen').classList.add('visible');
+});
+
+// Respawn Button
+document.getElementById('respawnBtn').addEventListener('click', () => {
+    document.getElementById('gameOverScreen').classList.remove('visible');
+    socket.emit('respawn');
+});
