@@ -9,9 +9,9 @@ app.use(express.static('public'));
 const FPS = 60;
 const INITIAL_MAP_RADIUS = 6000;
 let mapRadius = INITIAL_MAP_RADIUS;
-const MIN_MAP_RADIUS = 500; // Stops shrinking here
+const MIN_MAP_RADIUS = 500; // Map stops shrinking at this radius
 const SHRINK_RATE = 1.0; 
-const NET_COOLDOWN_MS = 30000; // 30 Seconds
+const NET_COOLDOWN_MS = 30000; // 30 Seconds cooldown for Net ability
 
 // --- MATH HELPERS ---
 function dist(x1, y1, x2, y2) {
@@ -23,7 +23,7 @@ class Snake {
     constructor(id) {
         this.id = id;
         this.username = "Unknown"; 
-        this.isReady = false;      
+        this.isReady = false; // Lobby status
         
         // Game Properties
         this.x = 0;
@@ -31,16 +31,19 @@ class Snake {
         this.angle = 0;
         this.points = [];
         this.length = 50; 
-        this.thickness = 12; 
+        this.thickness = 12; // Base thickness
         this.score = 0;
         this.speed = 3;
-        this.isDead = true; // Default dead until spawn
+        this.isDead = true; // Initially dead until game starts
         
+        // Abilities & Effects
         this.isBoosting = false; 
         this.boostTimer = 0;     
         this.invulnerable = false;
         this.shieldTimer = 0;
         this.poisonTimer = 0; 
+        
+        // Cooldowns
         this.lastNetTime = 0; 
         this.currentNetCooldown = 0;
         this.massDropTimer = 0; 
@@ -61,6 +64,7 @@ class Snake {
         this.boostTimer = 0;
         this.poisonTimer = 0;
         
+        // Initialize body segments
         for(let i=0; i<this.length; i++) {
             this.points.push({x: this.x, y: this.y});
         }
@@ -72,17 +76,21 @@ class Snake {
         let currentSpeed = this.speed;
 
         // --- SPEED & MASS DROP LOGIC ---
+        // 1. Orb Boost (Free)
         if (this.boostTimer > 0) {
             currentSpeed = 6;
             this.boostTimer--;
         } 
+        // 2. Manual Boost (Costs Mass)
         else if (this.isBoosting) {
             if (this.length > 20) {
                 currentSpeed = 6;
                 this.massDropTimer++;
+                // Drop mass every ~10 frames
                 if (this.massDropTimer > 10) { 
                     this.length -= 1;
                     this.score = Math.max(0, this.score - 10);
+                    // Spawn food at tail position
                     const tail = this.points[this.points.length - 1];
                     if (tail) spawnFood(tail.x, tail.y, 'normal');
                     this.massDropTimer = 0;
@@ -94,30 +102,35 @@ class Snake {
             this.massDropTimer = 0;
         }
 
+        // Handle Shield Timer
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
         }
 
+        // Update Net Cooldown
         const now = Date.now();
         const timePassed = now - this.lastNetTime;
         this.currentNetCooldown = Math.max(0, NET_COOLDOWN_MS - timePassed);
 
+        // Dynamic Thickness (Max 35)
         this.thickness = 12 + (this.length * 0.02); 
         if (this.thickness > 35) this.thickness = 35;
 
+        // Move Head
         this.x += Math.cos(this.angle) * currentSpeed;
         this.y += Math.sin(this.angle) * currentSpeed;
 
+        // Move Body
         this.points.unshift({x: this.x, y: this.y});
         while (this.points.length > this.length) {
             this.points.pop();
         }
 
-        // Poison Logic
+        // Poison Zone Logic
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
-            if (this.poisonTimer > 300) return 'die'; 
+            if (this.poisonTimer > 300) return 'die'; // Die after 5 seconds in poison
         } else {
             this.poisonTimer = 0; 
         }
@@ -133,14 +146,17 @@ let activeMines = [];
 let nets = [];
 let gameRunning = false; 
 
-// Shrink State
+// Shrink System State
 let isShrinking = false;
 let shrinkTimer = 0; 
+
+// --- GAME FUNCTIONS ---
 
 function spawnFood(x, y, specificType) {
     let spawnX = x;
     let spawnY = y;
     
+    // Random position if not specified
     if (spawnX === undefined || spawnY === undefined) {
         const angle = Math.random() * Math.PI * 2;
         const r = Math.random() * Math.max(100, mapRadius); 
@@ -177,16 +193,16 @@ function scatterFood(x, y) {
 function killPlayer(player) {
     if(player.isDead) return;
     player.isDead = true;
+    
+    // Scatter body segments as food
     for (let i = 0; i < player.points.length; i += 2) {
         const pt = player.points[i];
         scatterFood(pt.x, pt.y);
     }
-    player.points = []; 
-    // Send game over only to the loser
-    io.to(player.id).emit('game_over', { score: player.score });
+    player.points = []; // Clear visual body
     
-    // We NO LONGER automatically reset the game for everyone here.
-    // The survivors keep playing.
+    // Notify client
+    io.to(player.id).emit('game_over', { score: player.score });
 }
 
 function startGame() {
@@ -198,10 +214,10 @@ function startGame() {
     isShrinking = false;
     shrinkTimer = 0;
     
-    // Spawn Initial Food
+    // Spawn Initial Food (420 items)
     for(let i=0; i<420; i++) spawnFood();
     
-    // Reset all players who are ready
+    // Reset all READY players
     const safeR = Math.max(100, mapRadius - 500);
     
     Object.values(players).forEach(p => {
@@ -215,21 +231,24 @@ function startGame() {
     io.emit('game_started');
 }
 
+// --- SOCKET EVENTS ---
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
     players[socket.id] = new Snake(socket.id);
 
+    // Join Lobby
     socket.on('join_game', (username) => {
         if(players[socket.id]) {
             players[socket.id].username = username || "Guest";
         }
     });
 
+    // Ready Status
     socket.on('player_ready', () => {
         if (players[socket.id]) {
             players[socket.id].isReady = !players[socket.id].isReady; 
             
-            // Start game if everyone is ready and at least 1 person exists
+            // Check start condition
             const allPlayers = Object.values(players);
             if (allPlayers.length > 0 && allPlayers.every(p => p.isReady)) {
                 startGame();
@@ -237,7 +256,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // NEW: Player manually leaving to lobby
+    // Leave Game (Return to Lobby)
     socket.on('leave_game', () => {
         if(players[socket.id]) {
             players[socket.id].isReady = false;
@@ -246,17 +265,21 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Movement Input
     socket.on('input', (data) => {
         if(gameRunning && players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
             let diff = data.angle - p.angle;
+            // Normalize angle
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
+            // Smooth turn
             p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 0.1);
             p.isBoosting = data.isBoosting;
         }
     });
 
+    // Ability: Cast Net
     socket.on('cast_net', () => {
         if(gameRunning && players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
@@ -270,6 +293,9 @@ io.on('connection', (socket) => {
                     owner: p.id,
                     timer: 120 
                 });
+                
+                // Play Sound for everyone
+                io.emit('play_sound', 'net');
             }
         }
     });
@@ -279,9 +305,9 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- GAME LOOP ---
+// --- MAIN GAME LOOP ---
 setInterval(() => {
-    // LOBBY PHASE
+    // 1. LOBBY PHASE
     if (!gameRunning) {
         const lobbyData = Object.values(players).map(p => ({
             username: p.username,
@@ -291,24 +317,30 @@ setInterval(() => {
         return; 
     }
 
-    // GAME PHASE
+    // 2. GAME PHASE
     let shouldShowWarning = false;
     let isMapFixed = false;
 
+    // --- SHRINK LOGIC ---
     if (mapRadius <= MIN_MAP_RADIUS) {
         mapRadius = MIN_MAP_RADIUS;
         isShrinking = false;
-        isMapFixed = true; 
+        isMapFixed = true; // Zone stabilized
     } else {
         shrinkTimer++;
         if (isShrinking) {
+            // Shrinking
             mapRadius -= SHRINK_RATE;
+            // Warning active for first 3 seconds (180 frames)
             if (shrinkTimer <= 180) shouldShowWarning = true;
+            // Stop shrinking after 20 seconds
             if (shrinkTimer > 1200) { 
                 isShrinking = false;
                 shrinkTimer = 0;
             }
         } else {
+            // Waiting
+            // Start shrinking after 20 seconds
             if (shrinkTimer > 1200) { 
                 isShrinking = true;
                 shrinkTimer = 0;
@@ -316,6 +348,7 @@ setInterval(() => {
         }
     }
 
+    // --- UPDATE PLAYERS ---
     for (let id in players) {
         let p = players[id];
         if (p.isDead) continue; 
@@ -326,22 +359,34 @@ setInterval(() => {
             continue;
         }
 
-        // Food
+        // Food Collision
         for(let i=foods.length-1; i>=0; i--) {
             let f = foods[i];
             if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
-                if(f.type === 'normal') { p.length += 5; p.score += 10; }
-                if(f.type === 'boost') p.boostTimer = 300;
-                if(f.type === 'shield') { p.invulnerable = true; p.shieldTimer = 300; }
-                if(f.type === 'mine') activeMines.push({x: f.x, y: f.y, radius: 150, timer: 180}); 
+                // Effects & Sounds
+                if(f.type === 'normal') { 
+                    p.length += 5; p.score += 10; 
+                }
+                if(f.type === 'boost') {
+                    p.boostTimer = 300;
+                    io.to(id).emit('play_sound', 'boost'); 
+                }
+                if(f.type === 'shield') { 
+                    p.invulnerable = true; p.shieldTimer = 300; 
+                    io.to(id).emit('play_sound', 'shield'); 
+                }
+                if(f.type === 'mine') {
+                    activeMines.push({x: f.x, y: f.y, radius: 150, timer: 180}); 
+                }
+                
                 foods.splice(i, 1);
                 spawnFood();
             }
         }
 
-        // Nets
+        // Net Collision
         for (let n of nets) {
-            if (n.owner !== p.id) {
+            if (n.owner !== p.id) { // Don't hurt self
                 if (dist(p.x, p.y, n.x, n.y) < n.radius) {
                     if (!p.invulnerable) {
                         p.length -= 1.0; 
@@ -351,13 +396,14 @@ setInterval(() => {
             }
         }
 
-        // Collision
+        // Snake vs Snake Collision
         for(let otherId in players) {
             if(id === otherId) continue;
             let enemy = players[otherId];
             if(enemy.isDead || p.invulnerable) continue;
 
             let crashed = false;
+            // Check head collision with enemy body
             for(let i=0; i<enemy.points.length; i++) {
                 if(dist(p.x, p.y, enemy.points[i].x, enemy.points[i].y) < p.thickness + enemy.thickness) {
                     crashed = true;
@@ -372,20 +418,25 @@ setInterval(() => {
         }
     }
 
-    // Mines
+    // --- UPDATE MINES ---
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
+            // Explode Sound
+            io.emit('play_sound', 'mine');
+
             for(let id in players) {
                 let p = players[id];
                 if(p.isDead || p.invulnerable) continue;
                 
                 let headDist = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
+                // Instant death if head is in blast radius
                 if(headDist < 150) {
                     killPlayer(p);
                     continue; 
                 }
 
+                // Halve length if body is hit
                 let bodyHit = false;
                 for(let j = 0; j < p.points.length; j += 5) { 
                     let pt = p.points[j];
@@ -403,12 +454,13 @@ setInterval(() => {
         }
     }
 
-    // Nets Timer
+    // --- UPDATE NETS ---
     for(let i=nets.length-1; i>=0; i--) {
         nets[i].timer--;
         if(nets[i].timer <= 0) nets.splice(i, 1);
     }
 
+    // Broadcast State
     io.emit('game_state', { players, foods, activeMines, nets, mapRadius, shouldShowWarning, isMapFixed });
 }, 1000/FPS);
 
