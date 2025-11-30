@@ -155,12 +155,16 @@ io.on('connection', (socket) => {
 
     socket.on('input', (data) => {
         if(players[socket.id] && !players[socket.id].isDead) {
+            // Validate input data
+            if (typeof data !== 'object' || data === null) return;
+            if (typeof data.angle !== 'number' || !isFinite(data.angle)) return;
+            
             let p = players[socket.id];
             let diff = data.angle - p.angle;
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
             p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 0.1);
-            p.isBoosting = data.isBoosting;
+            p.isBoosting = !!data.isBoosting;
         }
     });
     

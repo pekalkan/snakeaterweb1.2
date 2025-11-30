@@ -13,18 +13,17 @@
         
         /* Game Over Screen Styles */
         #gameOverScreen {
-            display: none; /* Initially hidden */
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.8);
-            display: flex;
+            display: none; /* Hidden by default */
             flex-direction: column;
             justify-content: center;
             align-items: center;
             z-index: 20;
         }
-        #gameOverScreen.hidden {
-            display: none !important;
+        #gameOverScreen.visible {
+            display: flex;
         }
         #gameOverScreen h1 { font-size: 60px; color: #ff4444; margin-bottom: 20px; text-shadow: 2px 2px 0 #000; }
         #gameOverScreen h2 { margin-bottom: 40px; }
@@ -48,7 +47,7 @@
         <div class="box">Throw Net: E</div>
     </div>
 
-    <div id="gameOverScreen" class="hidden">
+    <div id="gameOverScreen">
         <h1>GAME OVER</h1>
         <h2 id="finalScore">Final Score: 0</h2>
         <button id="respawnBtn">Play Again</button>
