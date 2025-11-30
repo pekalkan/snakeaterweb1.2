@@ -11,6 +11,7 @@
         
         #minimap { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.5); border: 2px solid #555; border-radius: 50%; z-index: 10; }
         
+        /* Game Over Screen */
         #gameOverScreen {
             display: none; 
             position: absolute;
@@ -22,21 +23,37 @@
             align-items: center;
             z-index: 20;
         }
-        #gameOverScreen.hidden {
-            display: none !important;
-        }
+        #gameOverScreen.hidden { display: none !important; }
         #gameOverScreen h1 { font-size: 60px; color: #ff4444; margin-bottom: 20px; text-shadow: 2px 2px 0 #000; }
         #respawnBtn {
-            padding: 15px 40px;
-            font-size: 24px;
-            background: #44aa44;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: 0.2s;
+            padding: 15px 40px; font-size: 24px; background: #44aa44; color: white;
+            border: none; border-radius: 5px; cursor: pointer; transition: 0.2s;
         }
         #respawnBtn:hover { background: #338833; transform: scale(1.05); }
+
+        /* SHRINK WARNING STYLE */
+        #shrinkWarning {
+            display: none;
+            position: absolute;
+            top: 10%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 32px;
+            font-weight: bold;
+            color: #ff0000;
+            text-shadow: 2px 2px 4px #000;
+            background: rgba(0,0,0,0.6);
+            padding: 10px 20px;
+            border-radius: 10px;
+            z-index: 15;
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.2; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -45,6 +62,8 @@
         <div class="box" id="speedStatus">Speed: Ready (Space)</div>
         <div class="box" id="netStatus" style="color: #aaa;">Net: Ready (E)</div>
     </div>
+
+    <div id="shrinkWarning">⚠️ WARNING: ZONE SHRINKING ⚠️</div>
 
     <div id="gameOverScreen" class="hidden">
         <h1>GAME OVER</h1>

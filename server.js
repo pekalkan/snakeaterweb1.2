@@ -9,7 +9,7 @@ app.use(express.static('public'));
 const FPS = 60;
 let mapRadius = 6000; // Large Map
 const MIN_MAP_RADIUS = 500;
-const SHRINK_RATE = 0.5; 
+const SHRINK_RATE = 1.0; // Increased rate since it's intermittent now
 const NET_COOLDOWN_MS = 30000; // 30 Seconds
 
 // --- MATH HELPERS ---
@@ -48,7 +48,7 @@ class Snake {
         // Timers
         this.lastNetTime = 0; 
         this.currentNetCooldown = 0;
-        this.massDropTimer = 0; // Timer for dropping mass when boosting
+        this.massDropTimer = 0; 
     }
 
     update() {
@@ -57,53 +57,40 @@ class Snake {
         let currentSpeed = this.speed;
 
         // --- SPEED & MASS DROP LOGIC ---
-        // 1. Power-up Boost (Free, no mass loss)
         if (this.boostTimer > 0) {
             currentSpeed = 6;
             this.boostTimer--;
         } 
-        // 2. Manual Boost (Costs mass)
         else if (this.isBoosting) {
-            // Can only boost if length is sufficient (> 20)
             if (this.length > 20) {
                 currentSpeed = 6;
-                
-                // Drop mass logic
                 this.massDropTimer++;
-                if (this.massDropTimer > 10) { // Every 10 frames (~6 times per second)
-                    // Shrink
+                if (this.massDropTimer > 10) { 
                     this.length -= 1;
                     this.score = Math.max(0, this.score - 10);
-                    
-                    // Drop food at the tail position
-                    // We check the last point in the array
                     const tail = this.points[this.points.length - 1];
-                    if (tail) {
-                        spawnFood(tail.x, tail.y, 'normal');
-                    }
-
+                    if (tail) spawnFood(tail.x, tail.y, 'normal');
                     this.massDropTimer = 0;
                 }
             } else {
-                // Not enough mass to boost
                 currentSpeed = this.speed; 
             }
         } else {
             this.massDropTimer = 0;
         }
 
-        // Handle Shield Timer
+        // Handle Shield
         if (this.shieldTimer > 0) {
             this.shieldTimer--;
             if(this.shieldTimer <= 0) this.invulnerable = false;
         }
 
-        // Calculate Net Cooldown for UI
+        // Net Cooldown
         const now = Date.now();
         const timePassed = now - this.lastNetTime;
         this.currentNetCooldown = Math.max(0, NET_COOLDOWN_MS - timePassed);
 
-        // Dynamic Thickness Logic
+        // Dynamic Thickness
         this.thickness = 12 + (this.length * 0.02); 
         if (this.thickness > 35) this.thickness = 35;
 
@@ -117,12 +104,10 @@ class Snake {
             this.points.pop();
         }
 
-        // Poison / Out of Bounds Logic
+        // Poison Logic
         if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
             this.poisonTimer++;
-            if (this.poisonTimer > 300) { // 5 seconds
-                return 'die'; 
-            }
+            if (this.poisonTimer > 300) return 'die'; 
         } else {
             this.poisonTimer = 0; 
         }
@@ -137,15 +122,17 @@ let foods = [];
 let activeMines = [];
 let nets = [];
 
-// Initial Food Spawn
-// UPDATED: Reduced by 30% (600 -> 420)
+// NEW: Shrink State Management
+let isShrinking = false;
+let shrinkTimer = 0; // Counts frames
+
+// Initial Food Spawn (Reduced count)
 for(let i=0; i<420; i++) spawnFood();
 
 function spawnFood(x, y, specificType) {
     let spawnX = x;
     let spawnY = y;
     
-    // If no coordinates provided, pick random location inside map
     if (spawnX === undefined || spawnY === undefined) {
         const angle = Math.random() * Math.PI * 2;
         const r = Math.random() * mapRadius;
@@ -181,22 +168,15 @@ function scatterFood(x, y) {
 
 function killPlayer(player) {
     if(player.isDead) return;
-    
     player.isDead = true;
-
-    // 1. Turn body into scattered food
     for (let i = 0; i < player.points.length; i += 2) {
         const pt = player.points[i];
         scatterFood(pt.x, pt.y);
     }
-
-    // 2. Clear body from screen
     player.points = []; 
-
     io.to(player.id).emit('game_over', { score: player.score });
 }
 
-// --- SOCKET CONNECTION ---
 io.on('connection', (socket) => {
     console.log('Player connected:', socket.id);
     players[socket.id] = new Snake(socket.id, 0, 0);
@@ -208,8 +188,6 @@ io.on('connection', (socket) => {
             while (diff < -Math.PI) diff += Math.PI * 2;
             while (diff > Math.PI) diff -= Math.PI * 2;
             p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 0.1);
-            
-            // Player intent to boost
             p.isBoosting = data.isBoosting;
         }
     });
@@ -232,12 +210,9 @@ io.on('connection', (socket) => {
     socket.on('cast_net', () => {
         if(players[socket.id] && !players[socket.id].isDead) {
             let p = players[socket.id];
-            
-            // --- COOLDOWN CHECK ---
             const now = Date.now();
             if (now - p.lastNetTime > NET_COOLDOWN_MS) { 
                 p.lastNetTime = now;
-                
                 nets.push({
                     x: p.x + Math.cos(p.angle) * 150,
                     y: p.y + Math.sin(p.angle) * 150,
@@ -256,11 +231,29 @@ io.on('connection', (socket) => {
 
 // --- GAME LOOP ---
 setInterval(() => {
-    if(mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
+    // --- WAVE SHRINKING LOGIC ---
+    // Cycle: 20s Wait -> 20s Shrink -> Repeat
+    shrinkTimer++;
+    if (isShrinking) {
+        // Shrink Phase
+        if (mapRadius > MIN_MAP_RADIUS) mapRadius -= SHRINK_RATE;
+        
+        // After 20 seconds (1200 frames), stop shrinking
+        if (shrinkTimer > 1200) {
+            isShrinking = false;
+            shrinkTimer = 0;
+        }
+    } else {
+        // Wait Phase
+        // After 20 seconds (1200 frames), start shrinking
+        if (shrinkTimer > 1200) {
+            isShrinking = true;
+            shrinkTimer = 0;
+        }
+    }
 
     for (let id in players) {
         let p = players[id];
-        
         if (p.isDead) continue; 
 
         const status = p.update();
@@ -269,7 +262,7 @@ setInterval(() => {
             continue;
         }
 
-        // Check Food
+        // Food
         for(let i=foods.length-1; i>=0; i--) {
             let f = foods[i];
             if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
@@ -277,15 +270,13 @@ setInterval(() => {
                 if(f.type === 'boost') p.boostTimer = 300;
                 if(f.type === 'shield') { p.invulnerable = true; p.shieldTimer = 300; }
                 if(f.type === 'mine') activeMines.push({x: f.x, y: f.y, radius: 150, timer: 180}); 
-                
                 foods.splice(i, 1);
                 spawnFood();
             }
         }
 
-        // Check Nets
+        // Nets
         for (let n of nets) {
-            // FIXED: Net ignores its owner
             if (n.owner !== p.id) {
                 if (dist(p.x, p.y, n.x, n.y) < n.radius) {
                     if (!p.invulnerable) {
@@ -296,7 +287,7 @@ setInterval(() => {
             }
         }
 
-        // Check Collision with Other Snakes
+        // Collision
         for(let otherId in players) {
             if(id === otherId) continue;
             let enemy = players[otherId];
@@ -309,7 +300,6 @@ setInterval(() => {
                     break;
                 }
             }
-
             if (crashed) {
                 killPlayer(p); 
                 if(!enemy.isDead) enemy.score += 100;
@@ -318,23 +308,20 @@ setInterval(() => {
         }
     }
 
-    // Update Mines
+    // Mines
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
-            // Explode
             for(let id in players) {
                 let p = players[id];
                 if(p.isDead || p.invulnerable) continue;
                 
-                // 1. Head Check (Instant Death)
                 let headDist = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
                 if(headDist < 150) {
                     killPlayer(p);
                     continue; 
                 }
 
-                // 2. Body Check (Halve Length)
                 let bodyHit = false;
                 for(let j = 0; j < p.points.length; j += 5) { 
                     let pt = p.points[j];
@@ -343,25 +330,23 @@ setInterval(() => {
                         break;
                     }
                 }
-
                 if (bodyHit) {
                     p.length = Math.floor(p.length / 2);
-                    if(p.points.length > p.length) {
-                        p.points.splice(p.length);
-                    }
+                    if(p.points.length > p.length) p.points.splice(p.length);
                 }
             }
             activeMines.splice(i, 1);
         }
     }
 
-    // Update Nets
+    // Nets Timer
     for(let i=nets.length-1; i>=0; i--) {
         nets[i].timer--;
         if(nets[i].timer <= 0) nets.splice(i, 1);
     }
 
-    io.emit('state', { players, foods, activeMines, nets, mapRadius });
+    // SEND STATE (Includes isShrinking flag)
+    io.emit('state', { players, foods, activeMines, nets, mapRadius, isShrinking });
 }, 1000/FPS);
 
 http.listen(3000, () => console.log('Server running on port 3000'));

@@ -4,20 +4,19 @@ const ctx = canvas.getContext('2d');
 const miniCanvas = document.getElementById('minimap');
 const miniCtx = miniCanvas.getContext('2d');
 
-// UI Elements - IDs must match index.html
 const gameOverScreen = document.getElementById('gameOverScreen');
 const finalScoreText = document.getElementById('finalScore');
 const respawnBtn = document.getElementById('respawnBtn');
 const statsBox = document.getElementById('stats');
 const netBox = document.getElementById('netStatus');
 const speedBox = document.getElementById('speedStatus');
+const shrinkWarningBox = document.getElementById('shrinkWarning');
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
 let mouseX = 0, mouseY = 0, isBoosting = false;
 
-// Input Handling
 window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 window.addEventListener('mousedown', () => isBoosting = true);
 window.addEventListener('mouseup', () => isBoosting = false);
@@ -45,22 +44,25 @@ socket.on('game_over', (data) => {
 socket.on('state', (state) => {
     const me = state.players[socket.id];
     
-    // UI Updates
+    // --- SHOW/HIDE SHRINK WARNING ---
+    if (state.isShrinking) {
+        shrinkWarningBox.style.display = 'block';
+    } else {
+        shrinkWarningBox.style.display = 'none';
+    }
+
     if(me && !me.isDead) {
-        // Score
         statsBox.innerText = `Length: ${Math.floor(me.length)} | Score: ${me.score}`;
         
-        // Net Cooldown Visual
         if (me.currentNetCooldown <= 0) {
             netBox.innerText = "Net: READY (E)";
-            netBox.style.color = "#0f0"; // Green
+            netBox.style.color = "#0f0"; 
         } else {
             const secondsLeft = Math.ceil(me.currentNetCooldown / 1000);
             netBox.innerText = `Net: ${secondsLeft}s`;
-            netBox.style.color = "#ff4444"; // Red
+            netBox.style.color = "#ff4444"; 
         }
 
-        // Speed/Boost Visual
         if (isBoosting) {
              speedBox.style.color = "gold";
              speedBox.innerText = "Speed: BOOSTING!";
@@ -70,7 +72,7 @@ socket.on('state', (state) => {
         }
     }
 
-    // Clear Screen
+    // Render Game
     ctx.fillStyle = '#12161c';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -82,14 +84,12 @@ socket.on('state', (state) => {
         ctx.translate(canvas.width/2, canvas.height/2); 
     }
 
-    // Map Border
     ctx.beginPath();
     ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
     ctx.strokeStyle = '#555';
     ctx.lineWidth = 5;
     ctx.stroke();
 
-    // Draw Objects
     state.activeMines.forEach(m => drawCircle(m.x, m.y, m.radius, 'rgba(255,0,0,0.3)'));
     state.nets.forEach(n => drawCircle(n.x, n.y, n.radius, 'rgba(138, 43, 226, 0.4)'));
 
@@ -101,7 +101,6 @@ socket.on('state', (state) => {
         drawCircle(f.x, f.y, f.radius, color);
     });
 
-    // Draw Snakes
     for(let id in state.players) {
         let p = state.players[id];
         if (p.isDead) continue; 
