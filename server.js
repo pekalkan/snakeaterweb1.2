@@ -245,8 +245,9 @@ setInterval(() => {
             }
         }
 
-        // Check Nets
+        // --- CHECK NETS (FIXED) ---
         for (let n of nets) {
+            // FIXED: Net ignores its owner
             if (n.owner !== p.id) {
                 if (dist(p.x, p.y, n.x, n.y) < n.radius) {
                     if (!p.invulnerable) {
@@ -279,7 +280,7 @@ setInterval(() => {
         }
     }
 
-    // Update Mines (BOMBA MANTIĞI BURADA DÜZELTİLDİ)
+    // Update Mines
     for(let i=activeMines.length-1; i>=0; i--) {
         activeMines[i].timer--;
         if(activeMines[i].timer <= 0) {
@@ -288,17 +289,16 @@ setInterval(() => {
                 let p = players[id];
                 if(p.isDead || p.invulnerable) continue;
                 
-                // 1. Kafa Kontrolü (Kesin Ölüm)
+                // 1. Head Check (Instant Death)
                 let headDist = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
                 if(headDist < 150) {
                     killPlayer(p);
-                    continue; // Kafa patladıysa vücuda bakmaya gerek yok
+                    continue; 
                 }
 
-                // 2. Vücut Kontrolü (%50 Küçülme)
+                // 2. Body Check (Halve Length)
                 let bodyHit = false;
-                // Vücudun her parçasını kontrol et
-                for(let j = 0; j < p.points.length; j += 5) { // Performans için 5'er atlayarak bak
+                for(let j = 0; j < p.points.length; j += 5) { 
                     let pt = p.points[j];
                     if(dist(pt.x, pt.y, activeMines[i].x, activeMines[i].y) < 150) {
                         bodyHit = true;
@@ -308,7 +308,6 @@ setInterval(() => {
 
                 if (bodyHit) {
                     p.length = Math.floor(p.length / 2);
-                    // Uzunluğu hemen güncelle ki görsel olarak da kısalsın
                     if(p.points.length > p.length) {
                         p.points.splice(p.length);
                     }
