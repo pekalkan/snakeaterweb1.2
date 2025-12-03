@@ -92,7 +92,8 @@ socket.on('game_started', () => {
     startMusic();
 });
 
-lobbyBtn.addEventListener('click', () => {
+// Function to handle returning to lobby (called by button or 'R' key)
+function returnToLobby() {
     socket.emit('leave_game'); 
     gameUI.style.display = 'none';
     minimapEl.style.display = 'none';
@@ -103,7 +104,9 @@ lobbyBtn.addEventListener('click', () => {
     // Stop loop effects
     sounds.poison.pause();
     sounds.poison.currentTime = 0;
-});
+}
+
+lobbyBtn.addEventListener('click', returnToLobby);
 
 socket.on('game_over', (data) => {
     finalScoreText.innerText = 'Final Score: ' + Math.floor(data.score);
@@ -126,6 +129,13 @@ window.addEventListener('mouseup', () => isBoosting = false);
 window.addEventListener('keydown', e => {
     if(e.code === 'Space') isBoosting = true;
     if(e.code === 'KeyE') socket.emit('cast_net');
+    
+    // NEW: 'R' Key for Lobby Return
+    if (e.code === 'KeyR') {
+        if (gameOverScreen.style.display !== 'none') {
+            returnToLobby();
+        }
+    }
 });
 window.addEventListener('keyup', e => { if(e.code === 'Space') isBoosting = false; });
 
