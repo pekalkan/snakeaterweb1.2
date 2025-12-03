@@ -1,304 +1,467 @@
-const socket = io();
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const miniCanvas = document.getElementById('minimap');
-const miniCtx = miniCanvas.getContext('2d');
+const express = require('express');
+const app = express();
+const http = require('http').createServer(app);
+const io = require('socket.io')(http);
 
-// UI Screens
-const loginScreen = document.getElementById('loginScreen');
-const lobbyScreen = document.getElementById('lobbyScreen');
-const gameUI = document.getElementById('gameUI');
-const gameOverScreen = document.getElementById('gameOverScreen');
-const minimapEl = document.getElementById('minimap');
+app.use(express.static('public'));
 
-// Controls
-const usernameInput = document.getElementById('usernameInput');
-const joinBtn = document.getElementById('joinBtn');
-const readyBtn = document.getElementById('readyBtn');
-const lobbyBtn = document.getElementById('lobbyBtn'); 
-const playerList = document.getElementById('playerList');
+// --- GAME SETTINGS ---
+const FPS = 60;
+const INITIAL_MAP_RADIUS = 6000;
+let mapRadius = INITIAL_MAP_RADIUS;
+const MIN_MAP_RADIUS = 500; // Map stops shrinking at this radius
+const SHRINK_RATE = 1.0; 
+const NET_COOLDOWN_MS = 30000; // 30 Seconds cooldown for Net ability
 
-// Stats & Warnings
-const statsBox = document.getElementById('stats');
-const netBox = document.getElementById('netStatus');
-const speedBox = document.getElementById('speedStatus');
-const shrinkWarningBox = document.getElementById('shrinkWarning');
-const shrinkStoppedBox = document.getElementById('shrinkStopped');
-const finalScoreText = document.getElementById('finalScore');
-
-// --- AUDIO SYSTEM ---
-const sounds = {
-    background: new Audio('assets/background.ogg'),
-    boost: new Audio('assets/boost.mp3'),
-    mine: new Audio('assets/mine.mp3'),
-    net: new Audio('assets/net.mp3'),
-    poison: new Audio('assets/poison.mp3'),
-    shield: new Audio('assets/shield.mp3'),
-    shrinking: new Audio('assets/shrinking.mp3')
-};
-
-sounds.background.loop = true;
-sounds.background.volume = 0.3;
-sounds.poison.loop = true;
-sounds.poison.volume = 0.5;
-
-let musicStarted = false;
-
-function startMusic() {
-    if (!musicStarted) {
-        sounds.background.play().catch(e => console.log("Audio play blocked:", e));
-        musicStarted = true;
-    }
+// --- MATH HELPERS ---
+function dist(x1, y1, x2, y2) {
+    return Math.hypot(x2 - x1, y2 - y1);
 }
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-
-let mouseX = 0, mouseY = 0, isBoosting = false;
-let stopMessageShown = false; 
-
-// --- LOGIN & LOBBY LOGIC ---
-joinBtn.addEventListener('click', () => {
-    startMusic();
-    const name = usernameInput.value || "Guest";
-    socket.emit('join_game', name);
-    loginScreen.style.display = 'none';
-    lobbyScreen.style.display = 'flex';
-});
-
-readyBtn.addEventListener('click', () => {
-    socket.emit('player_ready');
-    readyBtn.style.background = '#888';
-});
-
-socket.on('lobby_state', (players) => {
-    playerList.innerHTML = '';
-    players.forEach(p => {
-        const row = document.createElement('div');
-        row.className = 'player-row';
-        const statusClass = p.isReady ? 'ready-green' : 'ready-red';
-        const statusText = p.isReady ? 'READY' : 'WAITING';
-        row.innerHTML = `<span>${p.username}</span> <span class="ready-status ${statusClass}">${statusText}</span>`;
-        playerList.appendChild(row);
-    });
-});
-
-// --- GAME START & LEAVE ---
-socket.on('game_started', () => {
-    lobbyScreen.style.display = 'none';
-    gameOverScreen.style.display = 'none'; 
-    gameUI.style.display = 'block';
-    minimapEl.style.display = 'block';
-    startMusic();
-});
-
-// Function to handle returning to lobby (called by button, 'R' key, or 'ESC' key)
-function returnToLobby() {
-    socket.emit('leave_game'); 
-    gameUI.style.display = 'none';
-    minimapEl.style.display = 'none';
-    gameOverScreen.style.display = 'none';
-    lobbyScreen.style.display = 'flex';
-    readyBtn.style.background = '#44aa44';
-    
-    // Stop loop effects
-    sounds.poison.pause();
-    sounds.poison.currentTime = 0;
-}
-
-lobbyBtn.addEventListener('click', returnToLobby);
-
-socket.on('game_over', (data) => {
-    finalScoreText.innerText = 'Final Score: ' + Math.floor(data.score);
-    gameOverScreen.style.display = 'flex';
-    sounds.poison.pause();
-});
-
-// --- PLAY SOUND EVENT ---
-socket.on('play_sound', (soundName) => {
-    if (sounds[soundName]) {
-        sounds[soundName].currentTime = 0;
-        sounds[soundName].play().catch(e => {});
-    }
-});
-
-// --- CONTROLS ---
-window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
-window.addEventListener('mousedown', () => isBoosting = true);
-window.addEventListener('mouseup', () => isBoosting = false);
-window.addEventListener('keydown', e => {
-    if(e.code === 'Space') isBoosting = true;
-    if(e.code === 'KeyE') socket.emit('cast_net');
-    
-    // 'R' Key for Lobby Return (Only if Game Over screen is visible)
-    if (e.code === 'KeyR') {
-        if (gameOverScreen.style.display !== 'none') {
-            returnToLobby();
-        }
-    }
-
-    // YENİ: 'ESC' Tuşu ile Oyundan Çıkma
-    // Oyun ekranı açıksa (Oyun oynarken veya Game Over ekranındayken) çalışır.
-    if (e.code === 'Escape') {
-        if (gameUI.style.display === 'block') {
-            returnToLobby();
-        }
-    }
-});
-window.addEventListener('keyup', e => { if(e.code === 'Space') isBoosting = false; });
-
-setInterval(() => {
-    const angle = Math.atan2(mouseY - canvas.height/2, mouseX - canvas.width/2);
-    socket.emit('input', { angle, isBoosting });
-}, 1000/60);
-
-// --- RENDER LOOP ---
-socket.on('game_state', (state) => {
-    const me = state.players[socket.id];
-    
-    // Shrink Sound & Warning
-    if (state.shouldShowWarning) {
-        if (sounds.shrinking.paused) sounds.shrinking.play().catch(()=>{});
-    }
-
-    // Reset Stop Message Flag
-    if (state.mapRadius > 1000) {
-        stopMessageShown = false;
-        shrinkStoppedBox.style.display = 'none';
-    }
-
-    // Shrink UI Messages
-    if (state.isMapFixed) {
-        shrinkWarningBox.style.display = 'none'; 
-        if (!stopMessageShown) {
-            shrinkStoppedBox.style.display = 'block';
-            stopMessageShown = true;
-            setTimeout(() => { shrinkStoppedBox.style.display = 'none'; }, 3000);
-        }
-    } else {
-        shrinkWarningBox.style.display = state.shouldShowWarning ? 'block' : 'none';
-    }
-
-    if(me && !me.isDead) {
-        statsBox.innerText = `Length: ${Math.floor(me.length)} | Score: ${me.score}`;
+// --- CLASSES ---
+class Snake {
+    constructor(id) {
+        this.id = id;
+        this.username = "Unknown"; 
+        this.isReady = false; // Lobby status
         
-        // Poison Sound Logic
-        const distFromCenter = Math.sqrt(me.x**2 + me.y**2);
-        if (distFromCenter > state.mapRadius && !me.invulnerable) {
-            if (sounds.poison.paused) sounds.poison.play().catch(()=>{});
-        } else {
-            if (!sounds.poison.paused) sounds.poison.pause();
-        }
+        // Game Properties
+        this.x = 0;
+        this.y = 0;
+        this.angle = 0;
+        this.points = [];
+        this.length = 50; 
+        this.thickness = 12; // Base thickness
+        this.score = 0;
+        this.speed = 3;
+        this.isDead = true; // Initially dead until game starts
+        
+        // Abilities & Effects
+        this.isBoosting = false; 
+        this.boostTimer = 0;     
+        this.invulnerable = false;
+        this.shieldTimer = 0;
+        this.poisonTimer = 0; 
+        
+        // Cooldowns
+        this.lastNetTime = 0; 
+        this.currentNetCooldown = 0;
+        this.massDropTimer = 0; 
+    }
 
-        // Net Cooldown UI
-        if (me.currentNetCooldown <= 0) {
-            netBox.innerText = "Net: READY (E)";
-            netBox.style.color = "#0f0"; 
-        } else {
-            const secondsLeft = Math.ceil(me.currentNetCooldown / 1000);
-            netBox.innerText = `Net: ${secondsLeft}s`;
-            netBox.style.color = "#ff4444"; 
-        }
-
-        // Speed Boost UI
-        if (isBoosting) {
-             speedBox.style.color = "gold";
-             speedBox.innerText = "Speed: BOOSTING!";
-        } else {
-             speedBox.style.color = "white";
-             speedBox.innerText = "Speed: Ready (Space)";
+    reset(startX, startY) {
+        this.x = startX;
+        this.y = startY;
+        this.angle = Math.random() * Math.PI * 2;
+        this.points = [];
+        this.length = 50;
+        this.thickness = 12;
+        this.score = 0;
+        this.isDead = false;
+        this.isBoosting = false;
+        this.invulnerable = false;
+        this.shieldTimer = 0;
+        this.boostTimer = 0;
+        this.poisonTimer = 0;
+        
+        // Initialize body segments
+        for(let i=0; i<this.length; i++) {
+            this.points.push({x: this.x, y: this.y});
         }
     }
 
-    // Clear Screen
-    ctx.fillStyle = '#12161c';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    update() {
+        if (this.isDead) return 'dead';
 
-    ctx.save();
+        let currentSpeed = this.speed;
+
+        // --- SPEED & MASS DROP LOGIC ---
+        // 1. Orb Boost (Free)
+        if (this.boostTimer > 0) {
+            currentSpeed = 6;
+            this.boostTimer--;
+        } 
+        // 2. Manual Boost (Costs Mass)
+        else if (this.isBoosting) {
+            if (this.length > 20) {
+                currentSpeed = 6;
+                this.massDropTimer++;
+                // Drop mass every ~10 frames
+                if (this.massDropTimer > 10) { 
+                    this.length -= 1;
+                    this.score = Math.max(0, this.score - 10);
+                    // Spawn food at tail position
+                    const tail = this.points[this.points.length - 1];
+                    if (tail) spawnFood(tail.x, tail.y, 'normal');
+                    this.massDropTimer = 0;
+                }
+            } else {
+                currentSpeed = this.speed; 
+            }
+        } else {
+            this.massDropTimer = 0;
+        }
+
+        // Handle Shield Timer
+        if (this.shieldTimer > 0) {
+            this.shieldTimer--;
+            if(this.shieldTimer <= 0) this.invulnerable = false;
+        }
+
+        // Update Net Cooldown
+        const now = Date.now();
+        const timePassed = now - this.lastNetTime;
+        this.currentNetCooldown = Math.max(0, NET_COOLDOWN_MS - timePassed);
+
+        // Dynamic Thickness (Max 35)
+        this.thickness = 12 + (this.length * 0.02); 
+        if (this.thickness > 35) this.thickness = 35;
+
+        // Move Head
+        this.x += Math.cos(this.angle) * currentSpeed;
+        this.y += Math.sin(this.angle) * currentSpeed;
+
+        // Move Body
+        this.points.unshift({x: this.x, y: this.y});
+        while (this.points.length > this.length) {
+            this.points.pop();
+        }
+
+        // Poison Zone Logic
+        if (dist(0,0, this.x, this.y) > mapRadius && !this.invulnerable) {
+            this.poisonTimer++;
+            if (this.poisonTimer > 300) return 'die'; // Die after 5 seconds in poison
+        } else {
+            this.poisonTimer = 0; 
+        }
+        
+        return 'alive';
+    }
+}
+
+// --- GLOBAL STATE ---
+let players = {};
+let foods = [];
+let activeMines = [];
+let nets = [];
+let gameRunning = false; 
+
+// Shrink System State
+let isShrinking = false;
+let shrinkTimer = 0; 
+
+// --- GAME FUNCTIONS ---
+
+function spawnFood(x, y, specificType) {
+    let spawnX = x;
+    let spawnY = y;
     
-    // Camera
-    if (me && !me.isDead) {
-        ctx.translate(canvas.width/2 - me.x, canvas.height/2 - me.y);
-    } else {
-        ctx.translate(canvas.width/2, canvas.height/2); 
+    // Random position if not specified
+    if (spawnX === undefined || spawnY === undefined) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * Math.max(100, mapRadius); 
+        spawnX = Math.cos(angle) * r;
+        spawnY = Math.sin(angle) * r;
     }
 
-    // Draw Poison Zone (Purple Tint)
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
-    ctx.rect(-20000, -20000, 40000, 40000);
-    ctx.fillStyle = 'rgba(75, 0, 130, 0.25)';
-    ctx.fill('evenodd');
-    ctx.restore();
+    let type = 'normal';
+    if (specificType) {
+        type = specificType;
+    } else {
+        const typeRoll = Math.random();
+        if (typeRoll < 0.05) type = 'boost';
+        else if (typeRoll < 0.1) type = 'shield';
+        else if (typeRoll < 0.15) type = 'mine';
+    }
 
-    // Map Border
-    ctx.beginPath();
-    ctx.arc(0, 0, state.mapRadius, 0, Math.PI*2);
-    ctx.strokeStyle = '#8844ff';
-    ctx.lineWidth = 5;
-    ctx.stroke();
+    foods.push({
+        x: spawnX,
+        y: spawnY,
+        type: type,
+        radius: type === 'normal' ? 6 : 10,
+        id: Math.random()
+    });
+}
 
-    // Draw Objects
-    state.activeMines.forEach(m => drawCircle(m.x, m.y, m.radius, 'rgba(255,0,0,0.3)'));
-    state.nets.forEach(n => drawCircle(n.x, n.y, n.radius, 'rgba(138, 43, 226, 0.4)'));
+function scatterFood(x, y) {
+    const scatterRange = 40; 
+    const offsetX = (Math.random() - 0.5) * scatterRange;
+    const offsetY = (Math.random() - 0.5) * scatterRange;
+    spawnFood(x + offsetX, y + offsetY, 'normal');
+}
 
-    state.foods.forEach(f => {
-        let color = '#fff';
-        if(f.type === 'boost') color = 'gold';
-        if(f.type === 'shield') color = '#0f0';
-        if(f.type === 'mine') color = '#f00';
-        drawCircle(f.x, f.y, f.radius, color);
+function killPlayer(player) {
+    if(player.isDead) return;
+    player.isDead = true;
+    
+    // Scatter body segments as food
+    for (let i = 0; i < player.points.length; i += 2) {
+        const pt = player.points[i];
+        scatterFood(pt.x, pt.y);
+    }
+    player.points = []; // Clear visual body
+    
+    // Notify client
+    io.to(player.id).emit('game_over', { score: player.score });
+}
+
+function startGame() {
+    gameRunning = true;
+    mapRadius = INITIAL_MAP_RADIUS;
+    foods = [];
+    activeMines = [];
+    nets = [];
+    isShrinking = false;
+    shrinkTimer = 0;
+    
+    // Spawn Initial Food (420 items)
+    for(let i=0; i<420; i++) spawnFood();
+    
+    // Reset all READY players
+    const safeR = Math.max(100, mapRadius - 500);
+    
+    Object.values(players).forEach(p => {
+        if (p.isReady) {
+            const sx = (Math.random() - 0.5) * safeR;
+            const sy = (Math.random() - 0.5) * safeR;
+            p.reset(sx, sy);
+        }
     });
 
-    // Draw Players
-    for(let id in state.players) {
-        let p = state.players[id];
+    io.emit('game_started');
+}
+
+// --- SOCKET EVENTS ---
+io.on('connection', (socket) => {
+    console.log('Player connected:', socket.id);
+    players[socket.id] = new Snake(socket.id);
+
+    // Join Lobby
+    socket.on('join_game', (username) => {
+        if(players[socket.id]) {
+            players[socket.id].username = username || "Guest";
+        }
+    });
+
+    // Ready Status
+    socket.on('player_ready', () => {
+        if (players[socket.id]) {
+            players[socket.id].isReady = !players[socket.id].isReady; 
+            
+            // Check start condition
+            const allPlayers = Object.values(players);
+            if (allPlayers.length > 0 && allPlayers.every(p => p.isReady)) {
+                startGame();
+            }
+        }
+    });
+
+    // Leave Game (Return to Lobby)
+    socket.on('leave_game', () => {
+        if(players[socket.id]) {
+            players[socket.id].isReady = false;
+            players[socket.id].isDead = true;
+            players[socket.id].points = [];
+        }
+    });
+
+    // Movement Input
+    socket.on('input', (data) => {
+        if(gameRunning && players[socket.id] && !players[socket.id].isDead) {
+            let p = players[socket.id];
+            let diff = data.angle - p.angle;
+            // Normalize angle
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            // Smooth turn
+            p.angle += Math.sign(diff) * Math.min(Math.abs(diff), 0.1);
+            p.isBoosting = data.isBoosting;
+        }
+    });
+
+    // Ability: Cast Net
+    socket.on('cast_net', () => {
+        if(gameRunning && players[socket.id] && !players[socket.id].isDead) {
+            let p = players[socket.id];
+            const now = Date.now();
+            if (now - p.lastNetTime > NET_COOLDOWN_MS) { 
+                p.lastNetTime = now;
+                nets.push({
+                    x: p.x + Math.cos(p.angle) * 150,
+                    y: p.y + Math.sin(p.angle) * 150,
+                    radius: 100,
+                    owner: p.id,
+                    timer: 120 
+                });
+                
+                // Play Sound for everyone
+                io.emit('play_sound', 'net');
+            }
+        }
+    });
+
+    socket.on('disconnect', () => {
+        delete players[socket.id];
+    });
+});
+
+// --- MAIN GAME LOOP ---
+setInterval(() => {
+    // 1. LOBBY PHASE
+    if (!gameRunning) {
+        const lobbyData = Object.values(players).map(p => ({
+            username: p.username,
+            isReady: p.isReady
+        }));
+        io.emit('lobby_state', lobbyData);
+        return; 
+    }
+
+    // 2. GAME PHASE
+    let shouldShowWarning = false;
+    let isMapFixed = false;
+
+    // --- SHRINK LOGIC ---
+    if (mapRadius <= MIN_MAP_RADIUS) {
+        mapRadius = MIN_MAP_RADIUS;
+        isShrinking = false;
+        isMapFixed = true; // Zone stabilized
+    } else {
+        shrinkTimer++;
+        if (isShrinking) {
+            // Shrinking
+            mapRadius -= SHRINK_RATE;
+            // Warning active for first 3 seconds (180 frames)
+            if (shrinkTimer <= 180) shouldShowWarning = true;
+            // Stop shrinking after 20 seconds
+            if (shrinkTimer > 1200) { 
+                isShrinking = false;
+                shrinkTimer = 0;
+            }
+        } else {
+            // Waiting
+            // Start shrinking after 20 seconds
+            if (shrinkTimer > 1200) { 
+                isShrinking = true;
+                shrinkTimer = 0;
+            }
+        }
+    }
+
+    // --- UPDATE PLAYERS ---
+    for (let id in players) {
+        let p = players[id];
         if (p.isDead) continue; 
 
-        let color = (id === socket.id) ? '#3cbe5a' : '#5a90be';
-        if(p.invulnerable) color = '#0f0';
-        
-        p.points.forEach(pt => drawCircle(pt.x, pt.y, p.thickness, color));
-        drawCircle(p.x, p.y, p.thickness+2, '#fff'); 
-        
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(p.username, p.x, p.y - 25);
+        const status = p.update();
+        if (status === 'die') {
+            killPlayer(p);
+            continue;
+        }
+
+        // Food Collision
+        for(let i=foods.length-1; i>=0; i--) {
+            let f = foods[i];
+            if(dist(p.x, p.y, f.x, f.y) < p.thickness + f.radius) {
+                // Effects & Sounds
+                if(f.type === 'normal') { 
+                    p.length += 5; p.score += 10; 
+                }
+                if(f.type === 'boost') {
+                    p.boostTimer = 300;
+                    io.to(id).emit('play_sound', 'boost'); 
+                }
+                if(f.type === 'shield') { 
+                    p.invulnerable = true; p.shieldTimer = 300; 
+                    io.to(id).emit('play_sound', 'shield'); 
+                }
+                if(f.type === 'mine') {
+                    activeMines.push({x: f.x, y: f.y, radius: 150, timer: 180}); 
+                }
+                
+                foods.splice(i, 1);
+                spawnFood();
+            }
+        }
+
+        // Net Collision
+        for (let n of nets) {
+            if (n.owner !== p.id) { // Don't hurt self
+                if (dist(p.x, p.y, n.x, n.y) < n.radius) {
+                    if (!p.invulnerable) {
+                        p.length -= 1.0; 
+                        if (p.length < 10) killPlayer(p);
+                    }
+                }
+            }
+        }
+
+        // Snake vs Snake Collision
+        for(let otherId in players) {
+            if(id === otherId) continue;
+            let enemy = players[otherId];
+            if(enemy.isDead || p.invulnerable) continue;
+
+            let crashed = false;
+            // Check head collision with enemy body
+            for(let i=0; i<enemy.points.length; i++) {
+                if(dist(p.x, p.y, enemy.points[i].x, enemy.points[i].y) < p.thickness + enemy.thickness) {
+                    crashed = true;
+                    break;
+                }
+            }
+            if (crashed) {
+                killPlayer(p); 
+                if(!enemy.isDead) enemy.score += 100;
+                break;
+            }
+        }
     }
-    ctx.restore();
 
-    if(me && !me.isDead) drawMinimap(state, me);
-});
+    // --- UPDATE MINES ---
+    for(let i=activeMines.length-1; i>=0; i--) {
+        activeMines[i].timer--;
+        if(activeMines[i].timer <= 0) {
+            // Explode Sound
+            io.emit('play_sound', 'mine');
 
-function drawCircle(x, y, r, color) {
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI*2);
-    ctx.fillStyle = color;
-    ctx.fill();
-}
+            for(let id in players) {
+                let p = players[id];
+                if(p.isDead || p.invulnerable) continue;
+                
+                let headDist = dist(p.x, p.y, activeMines[i].x, activeMines[i].y);
+                // Instant death if head is in blast radius
+                if(headDist < 150) {
+                    killPlayer(p);
+                    continue; 
+                }
 
-function drawMinimap(state, me) {
-    miniCtx.clearRect(0,0,150,150);
-    const scale = 150 / (6000 * 2); 
-    const cx = 75, cy = 75;
-
-    miniCtx.strokeStyle = '#8844ff';
-    miniCtx.beginPath();
-    miniCtx.arc(cx, cy, state.mapRadius * scale, 0, Math.PI*2);
-    miniCtx.stroke();
-    
-    miniCtx.fillStyle = 'rgba(75, 0, 130, 0.3)';
-    miniCtx.fill(); 
-
-    for(let id in state.players) {
-        let p = state.players[id];
-        if(p.isDead) continue;
-        
-        miniCtx.fillStyle = (id === socket.id) ? '#0f0' : '#f00';
-        miniCtx.beginPath();
-        miniCtx.arc(cx + p.x*scale, cy + p.y*scale, 2, 0, Math.PI*2);
-        miniCtx.fill();
+                // Halve length if body is hit
+                let bodyHit = false;
+                for(let j = 0; j < p.points.length; j += 5) { 
+                    let pt = p.points[j];
+                    if(dist(pt.x, pt.y, activeMines[i].x, activeMines[i].y) < 150) {
+                        bodyHit = true;
+                        break;
+                    }
+                }
+                if (bodyHit) {
+                    p.length = Math.floor(p.length / 2);
+                    if(p.points.length > p.length) p.points.splice(p.length);
+                }
+            }
+            activeMines.splice(i, 1);
+        }
     }
-}
+
+    // --- UPDATE NETS ---
+    for(let i=nets.length-1; i>=0; i--) {
+        nets[i].timer--;
+        if(nets[i].timer <= 0) nets.splice(i, 1);
+    }
+
+    // Broadcast State
+    io.emit('game_state', { players, foods, activeMines, nets, mapRadius, shouldShowWarning, isMapFixed });
+}, 1000/FPS);
+
+http.listen(3000, () => console.log('Server running on port 3000'));
